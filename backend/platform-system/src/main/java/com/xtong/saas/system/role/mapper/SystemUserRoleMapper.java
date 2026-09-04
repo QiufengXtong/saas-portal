@@ -3,8 +3,21 @@ package com.xtong.saas.system.role.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.xtong.saas.system.role.entity.SystemUserRole;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
+
+import java.util.List;
 
 /** 提供用户角色物理关联的 MyBatis-Plus 数据访问入口。 */
 @Mapper
 public interface SystemUserRoleMapper extends BaseMapper<SystemUserRole> {
+
+    @Select("""
+            SELECT role_id
+            FROM sys_user_role
+            WHERE tenant_id = #{tenantId}
+              AND user_id = #{userId}
+            ORDER BY role_id
+            """)
+    List<Long> selectRoleIdsByUserId(@Param("tenantId") long tenantId, @Param("userId") long userId);
 }
