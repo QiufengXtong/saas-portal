@@ -24,6 +24,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -220,6 +221,36 @@ class RoleServiceTest {
 
         afterRollback();
         verify(sessionRevocationService, never()).revokeAllUserSessions(1L, 10L);
+    }
+
+    @Test
+    void shouldLockTenantBeforeDisablingRoleStatus() {
+        when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
+        when(roleMapper.selectOne(any())).thenReturn(role(8L, false));
+        when(userRoleMapper.selectUserIdsByRole(1L, 8L)).thenReturn(List.of());
+
+        TenantScope.run(1L, () -> service.disable(8L));
+
+        org.mockito.InOrder order = inOrder(tenantMapper, roleMapper);
+        order.verify(tenantMapper).lockByIdForAdminInvariant(1L);
+        order.verify(roleMapper).selectOne(any());
+        order.verify(roleMapper).updateById(any(SystemRole.class));
+    }
+
+    @Test
+    void shouldLockTenantBeforeEnablingRoleStatus() {
+        SystemRole disabledRole = role(8L, false);
+        disabledRole.setStatus(RoleStatus.DISABLED);
+        when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
+        when(roleMapper.selectOne(any())).thenReturn(disabledRole);
+        when(userRoleMapper.selectUserIdsByRole(1L, 8L)).thenReturn(List.of());
+
+        TenantScope.run(1L, () -> service.enable(8L));
+
+        org.mockito.InOrder order = inOrder(tenantMapper, roleMapper);
+        order.verify(tenantMapper).lockByIdForAdminInvariant(1L);
+        order.verify(roleMapper).selectOne(any());
+        order.verify(roleMapper).updateById(any(SystemRole.class));
     }
 
     @Test

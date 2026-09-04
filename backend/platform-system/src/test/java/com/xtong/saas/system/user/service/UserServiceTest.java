@@ -36,6 +36,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -91,6 +92,27 @@ class UserServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(exception -> ((BusinessException) exception).getErrorCode())
                 .isEqualTo(UserErrorCode.USERNAME_ALREADY_EXISTS));
+    }
+
+    @Test
+    void shouldLockTenantBeforeCreatingUserRoleRelations() {
+        when(userMapper.countByTenantAndUsernameIncludingDeleted(1L, "alice")).thenReturn(0L);
+        when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
+        when(roleMapper.countByTenantAndIds(1L, Set.of(8L))).thenReturn(1L);
+        when(passwordEncoder.encode("Password123")).thenReturn("bcrypt");
+        doAnswer(invocation -> {
+            ((SystemUser) invocation.getArgument(0)).setId(10L);
+            return 1;
+        }).when(userMapper).insert(any(SystemUser.class));
+
+        TenantScope.run(1L, () -> service.create(createCommand(Set.of(8L))));
+
+        org.mockito.InOrder order = inOrder(tenantMapper, roleMapper, userMapper, userRoleMapper);
+        order.verify(tenantMapper).lockByIdForAdminInvariant(1L);
+        order.verify(roleMapper).countByTenantAndIds(1L, Set.of(8L));
+        order.verify(userMapper).insert(any(SystemUser.class));
+        order.verify(userRoleMapper).deleteByUser(1L, 10L);
+        order.verify(userRoleMapper).insert(any(SystemUserRole.class));
     }
 
     @Test

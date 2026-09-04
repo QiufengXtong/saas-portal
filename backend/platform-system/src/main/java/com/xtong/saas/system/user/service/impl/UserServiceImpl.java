@@ -84,6 +84,9 @@ public class UserServiceImpl implements UserService {
         if (userMapper.countByTenantAndUsernameIncludingDeleted(tenantId, command.username()) > 0) {
             throw new BusinessException(UserErrorCode.USERNAME_ALREADY_EXISTS);
         }
+        if (command.roleIds() != null && !command.roleIds().isEmpty()) {
+            lockTenantForAdminInvariant(tenantId);
+        }
         validateRoleIds(tenantId, command.roleIds());
         SystemUser user = new SystemUser();
         user.setTenantId(tenantId);

@@ -59,3 +59,22 @@
 - `-pl platform-system -am -Dtest=RoleServiceTest -Dsurefire.failIfNoSpecifiedTests=false test`：14/14 通过。
 - `-pl platform-system -am test`：Common 16/16、System 51/51 通过。
 - 后端 reactor `test`：以 `BUILD SUCCESS` 结束；Common 16/16、System 51/51，Business 无测试，Boot 测试通过。
+
+## 二次复审修复（Needs fixes）
+
+### 修复内容
+
+- 恢复 `RoleServiceTest` 对 Mockito `inOrder` 的静态导入，并在最终源码实际执行 Role/User 聚焦测试，确保测试可编译、可运行。
+- `UserService.create` 在初始 `roleIds` 非空时，于角色校验之前获取 Task 7/8 共用的 `lockByIdForAdminInvariant` 租户行锁；用户名唯一性检查仍在锁前，空角色集合的创建不触及角色关联，因而不额外串行化。该选择将角色验证、用户插入和 `sys_user_role` 物理关联写入与角色删除/授权置于同一锁协议下。
+- 新增用户创建角色关联锁顺序测试，验证锁先于角色归属校验、用户插入、关联删除和插入。新增角色启用、停用各自的 `InOrder` 测试，明确锁先于 `selectOne` 和 `updateById`。
+
+### 二次复审 TDD 记录
+
+1. **RED**：先修复 Role 测试导入并添加用户创建及启停顺序测试，聚焦测试中用户创建用例以“期望租户锁但未调用”失败；输出同时列出已发生的角色校验、用户插入和用户角色关联，准确复现竞态窗口。
+2. **GREEN**：只在非空角色集合创建路径的角色校验前加入共享锁；RoleServiceTest 16/16、UserServiceTest 15/15 通过。
+
+### 二次复审验证
+
+- `-pl platform-system -am -Dtest=RoleServiceTest,UserServiceTest -Dsurefire.failIfNoSpecifiedTests=false test`：31/31 通过。
+- `-pl platform-system -am test`：Common 16/16、System 54/54 通过。
+- 后端 reactor `test`：以 `BUILD SUCCESS` 结束；Common 16/16、System 54/54，Business 无测试，Boot 测试通过。
