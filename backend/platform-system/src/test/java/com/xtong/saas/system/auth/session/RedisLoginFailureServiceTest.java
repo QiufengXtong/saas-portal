@@ -6,24 +6,32 @@ import com.xtong.saas.system.auth.exception.AuthErrorCode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.script.RedisScript;
 
 import java.time.Duration;
+import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** 验证 Redis 登录失败计数、规范化、统计窗口和锁定期限。 */
+/** 验证 Redis Lua 登录失败计数、无歧义键、统计窗口和锁定期限。 */
 @ExtendWith(MockitoExtension.class)
 class RedisLoginFailureServiceTest {
 
-    private static final String NORMALIZED_KEY = "saas:portal:auth:login-failure:default:admin";
+    private static final String NORMALIZED_KEY = "saas:portal:auth:login-failure:7:default:5:admin";
     private static final Duration FAILURE_WINDOW = Duration.ofMinutes(15);
     private static final Duration LOCK_DURATION = Duration.ofMinutes(30);
 
@@ -41,34 +49,77 @@ class RedisLoginFailureServiceTest {
     }
 
     @Test
-    void shouldNormalizeIdentityAndStartFailureWindowOnFirstFailure() {
-        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(valueOperations.increment(NORMALIZED_KEY)).thenReturn(1L);
+    void shouldIncrementAndApplyWindowOrLockTtlInOneLuaCall() {
+        doReturn(1L).when(redisTemplate)
+                .execute(any(RedisScript.class), anyList(), any(Object[].class));
 
         service.recordFailure(" Default ", " ADMIN ");
 
-        verify(redisTemplate).expire(NORMALIZED_KEY, FAILURE_WINDOW);
+        ArgumentCaptor<RedisScript<Long>> script = redisScriptCaptor();
+        verify(redisTemplate).execute(
+                script.capture(),
+                eq(List.of(NORMALIZED_KEY)),
+                eq("900000"), eq("3"), eq("1800000"));
+        assertThat(script.getValue().getScriptAsString())
+                .contains("INCR", "PTTL", "count >= tonumber(ARGV[2])", "PEXPIRE");
+        verify(redisTemplate, never()).expire(any(String.class), any(Duration.class));
     }
 
     @Test
-    void shouldKeepOriginalWindowBeforeLimit() {
-        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(valueOperations.increment(NORMALIZED_KEY)).thenReturn(2L);
+    void shouldRestoreFailureWindowWhenAnExistingCounterHasNoTtl() {
+        doReturn(2L).when(redisTemplate)
+                .execute(any(RedisScript.class), anyList(), any(Object[].class));
 
         service.recordFailure("default", "admin");
 
-        verify(redisTemplate, never()).expire(NORMALIZED_KEY, FAILURE_WINDOW);
-        verify(redisTemplate, never()).expire(NORMALIZED_KEY, LOCK_DURATION);
+        ArgumentCaptor<RedisScript<Long>> script = redisScriptCaptor();
+        verify(redisTemplate).execute(
+                script.capture(),
+                eq(List.of(NORMALIZED_KEY)),
+                eq("900000"), eq("3"), eq("1800000"));
+        assertThat(script.getValue().getScriptAsString())
+                .contains("ttl < 0", "PEXPIRE");
     }
 
     @Test
-    void shouldApplyLockDurationWhenFailureLimitIsReached() {
-        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(valueOperations.increment(NORMALIZED_KEY)).thenReturn(3L);
+    void shouldPassThresholdAndLockDurationToTheAtomicScript() {
+        doReturn(3L).when(redisTemplate)
+                .execute(any(RedisScript.class), anyList(), any(Object[].class));
 
         service.recordFailure("default", "admin");
 
-        verify(redisTemplate).expire(NORMALIZED_KEY, LOCK_DURATION);
+        verify(redisTemplate).execute(
+                any(RedisScript.class),
+                eq(List.of(NORMALIZED_KEY)),
+                eq("900000"), eq("3"), eq("1800000"));
+    }
+
+    @Test
+    void shouldFailClosedWhenAtomicCounterDoesNotReturnAResult() {
+        doReturn(null).when(redisTemplate)
+                .execute(any(RedisScript.class), anyList(), any(Object[].class));
+
+        assertThatThrownBy(() -> service.recordFailure("default", "admin"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("count");
+    }
+
+    @Test
+    void shouldUseUnambiguousLengthPrefixedNormalizedIdentityComponents() {
+        doReturn(1L).when(redisTemplate)
+                .execute(any(RedisScript.class), anyList(), any(Object[].class));
+
+        service.recordFailure("a:b", "c");
+        service.recordFailure("a", "b:c");
+
+        verify(redisTemplate).execute(
+                any(RedisScript.class),
+                eq(List.of("saas:portal:auth:login-failure:3:a:b:1:c")),
+                any(Object[].class));
+        verify(redisTemplate).execute(
+                any(RedisScript.class),
+                eq(List.of("saas:portal:auth:login-failure:1:a:3:b:c")),
+                any(Object[].class));
     }
 
     @Test
@@ -105,5 +156,10 @@ class RedisLoginFailureServiceTest {
                 3,
                 FAILURE_WINDOW,
                 LOCK_DURATION);
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static ArgumentCaptor<RedisScript<Long>> redisScriptCaptor() {
+        return (ArgumentCaptor) ArgumentCaptor.forClass(RedisScript.class);
     }
 }

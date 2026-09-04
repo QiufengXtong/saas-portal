@@ -4,16 +4,30 @@ import com.xtong.saas.common.exception.BusinessException;
 import com.xtong.saas.system.auth.config.AuthProperties;
 import com.xtong.saas.system.auth.exception.AuthErrorCode;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Locale;
 
-/** 使用规范化租户编码和用户名维护 Redis 登录失败窗口及锁定期限。 */
+/** 使用 Redis Lua 原子维护无歧义身份键的登录失败窗口及锁定期限。 */
 @Service
 public class RedisLoginFailureService implements LoginFailureService {
 
     private static final String LOGIN_FAILURE_KEY_PREFIX = "saas:portal:auth:login-failure:";
+
+    /** 原子递增计数，并为首次或意外缺失 TTL 的计数恢复窗口、为阈值计数设置锁定期。 */
+    private static final DefaultRedisScript<Long> RECORD_FAILURE_SCRIPT = new DefaultRedisScript<>("""
+            local count = redis.call('INCR', KEYS[1])
+            local ttl = redis.call('PTTL', KEYS[1])
+            if count == 1 or ttl < 0 then
+                redis.call('PEXPIRE', KEYS[1], ARGV[1])
+            end
+            if count >= tonumber(ARGV[2]) then
+                redis.call('PEXPIRE', KEYS[1], ARGV[3])
+            end
+            return count
+            """, Long.class);
 
     private final StringRedisTemplate redisTemplate;
     private final AuthProperties properties;
@@ -25,7 +39,7 @@ public class RedisLoginFailureService implements LoginFailureService {
 
     @Override
     public void assertAllowed(String tenantCode, String username) {
-        String failures = valueOperations().get(key(tenantCode, username));
+        String failures = redisTemplate.opsForValue().get(key(tenantCode, username));
         if (failures == null) {
             return;
         }
@@ -40,15 +54,14 @@ public class RedisLoginFailureService implements LoginFailureService {
 
     @Override
     public void recordFailure(String tenantCode, String username) {
-        String key = key(tenantCode, username);
-        Long failureCount = valueOperations().increment(key);
+        Long failureCount = redisTemplate.execute(
+                RECORD_FAILURE_SCRIPT,
+                List.of(key(tenantCode, username)),
+                Long.toString(properties.loginFailureWindow().toMillis()),
+                Integer.toString(properties.loginFailureLimit()),
+                Long.toString(properties.loginLockDuration().toMillis()));
         if (failureCount == null) {
             throw new IllegalStateException("Login failure count could not be updated");
-        }
-        if (failureCount >= properties.loginFailureLimit()) {
-            redisTemplate.expire(key, properties.loginLockDuration());
-        } else if (failureCount == 1L) {
-            redisTemplate.expire(key, properties.loginFailureWindow());
         }
     }
 
@@ -57,12 +70,17 @@ public class RedisLoginFailureService implements LoginFailureService {
         redisTemplate.delete(key(tenantCode, username));
     }
 
-    private ValueOperations<String, String> valueOperations() {
-        return redisTemplate.opsForValue();
+    private static String key(String tenantCode, String username) {
+        String normalizedTenant = normalize(tenantCode);
+        String normalizedUsername = normalize(username);
+        return LOGIN_FAILURE_KEY_PREFIX
+                + component(normalizedTenant)
+                + ":"
+                + component(normalizedUsername);
     }
 
-    private static String key(String tenantCode, String username) {
-        return LOGIN_FAILURE_KEY_PREFIX + normalize(tenantCode) + ":" + normalize(username);
+    private static String component(String value) {
+        return value.length() + ":" + value;
     }
 
     private static String normalize(String value) {

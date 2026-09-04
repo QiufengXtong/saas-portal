@@ -8,43 +8,47 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
-import org.springframework.data.redis.core.SetOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.script.RedisScript;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
-import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Stream;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.mockingDetails;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** 验证 Redis 会话键、TTL、序列化、令牌轮换和多设备撤销协议。 */
+/** 验证 Redis Lua 会话键、TTL、序列化、令牌原子轮换和多设备撤销协议。 */
 @ExtendWith(MockitoExtension.class)
 class RedisSessionStoreTest {
 
     private static final Duration TTL = Duration.ofDays(7);
+    private static final String TTL_MILLIS = "604800000";
 
     @Mock
     private StringRedisTemplate redisTemplate;
 
     @Mock
     private ValueOperations<String, String> valueOperations;
-
-    @Mock
-    private SetOperations<String, String> setOperations;
 
     private ObjectMapper objectMapper;
     private RedisSessionStore store;
@@ -56,51 +60,82 @@ class RedisSessionStoreTest {
     }
 
     @Test
-    void shouldStoreOnlyRefreshHashAndKeepMultipleDeviceSessionIds() throws Exception {
-        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(redisTemplate.opsForSet()).thenReturn(setOperations);
+    void shouldCreateSessionRefreshMappingAndUserIndexInOneLuaCall() throws Exception {
+        doReturn(1L).when(redisTemplate)
+                .execute(any(RedisScript.class), anyList(), any(Object[].class));
         String rawRefreshToken = "raw-refresh-token-that-must-never-reach-redis";
         String refreshTokenHash = new TokenHashService().hash(rawRefreshToken);
-        AuthSession first = session("s1", refreshTokenHash);
-        AuthSession second = session("s2", "second-refresh-hash");
+        AuthSession first = session("s1", 1L, 2L, refreshTokenHash);
 
-        store.create(first, refreshTokenHash, TTL);
-        store.create(second, "second-refresh-hash", TTL);
+        assertThat(store.create(first, refreshTokenHash, TTL)).isTrue();
 
         ArgumentCaptor<String> serialized = ArgumentCaptor.forClass(String.class);
-        verify(valueOperations).set(eq("saas:portal:auth:session:s1"), serialized.capture(), eq(TTL));
-        assertThat(objectMapper.readValue(serialized.getValue(), AuthSession.class)).isEqualTo(first);
-        verify(valueOperations).set("saas:portal:auth:refresh:" + refreshTokenHash, "s1", TTL);
-        verify(setOperations).add(eq("saas:portal:auth:user-sessions:1:2"), eq(new String[]{"s1"}));
-        verify(setOperations).add(eq("saas:portal:auth:user-sessions:1:2"), eq(new String[]{"s2"}));
-        verify(redisTemplate, org.mockito.Mockito.times(2))
-                .expire("saas:portal:auth:user-sessions:1:2", TTL);
-        assertThat(allStringArguments(redisTemplate, valueOperations, setOperations))
-                .doesNotContain(rawRefreshToken);
+        ArgumentCaptor<RedisScript<Long>> script = redisScriptCaptor();
+        verify(redisTemplate).execute(
+                script.capture(),
+                eq(List.of(
+                        "saas:portal:auth:session:s1",
+                        "saas:portal:auth:refresh:" + refreshTokenHash,
+                        "saas:portal:auth:user-sessions:1:2")),
+                serialized.capture(), eq("s1"), eq(TTL_MILLIS));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> stored = objectMapper.readValue(serialized.getValue(), Map.class);
+        assertThat(stored)
+                .containsEntry("tenantId", "1")
+                .containsEntry("userId", "2")
+                .containsEntry("refreshTokenHash", refreshTokenHash);
+        assertThat(serialized.getValue()).doesNotContain(rawRefreshToken);
+        assertThat(script.getValue().getScriptAsString())
+                .contains("EXISTS", "SET", "SADD", "PEXPIRE");
+        verify(redisTemplate, never()).delete(any(String.class));
     }
 
     @Test
-    void shouldConsumeRefreshTokenOnlyOnceWithAtomicGetAndDelete() {
-        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        String refreshTokenHash = "refresh-hash";
-        when(valueOperations.getAndDelete("saas:portal:auth:refresh:" + refreshTokenHash))
-                .thenReturn("s1")
-                .thenReturn(null);
+    void shouldKeepMultipleDeviceIdsInTheSameAtomicUserIndex() {
+        doReturn(1L).when(redisTemplate)
+                .execute(any(RedisScript.class), anyList(), any(Object[].class));
 
-        assertThat(store.consumeRefreshToken(refreshTokenHash)).contains("s1");
-        assertThat(store.consumeRefreshToken(refreshTokenHash)).isEmpty();
+        assertThat(store.create(session("s1", 1L, 2L, "first-hash"), "first-hash", TTL)).isTrue();
+        assertThat(store.create(session("s2", 1L, 2L, "second-hash"), "second-hash", TTL)).isTrue();
 
-        verify(valueOperations, org.mockito.Mockito.times(2))
-                .getAndDelete("saas:portal:auth:refresh:" + refreshTokenHash);
-        verify(valueOperations, never()).get("saas:portal:auth:refresh:" + refreshTokenHash);
+        verify(redisTemplate).execute(any(RedisScript.class),
+                eq(List.of(
+                        "saas:portal:auth:session:s1",
+                        "saas:portal:auth:refresh:first-hash",
+                        "saas:portal:auth:user-sessions:1:2")),
+                any(), eq("s1"), eq(TTL_MILLIS));
+        verify(redisTemplate).execute(any(RedisScript.class),
+                eq(List.of(
+                        "saas:portal:auth:session:s2",
+                        "saas:portal:auth:refresh:second-hash",
+                        "saas:portal:auth:user-sessions:1:2")),
+                any(), eq("s2"), eq(TTL_MILLIS));
     }
 
     @Test
-    void shouldFindSerializedSession() throws Exception {
+    void shouldRejectSessionIdCollisionWithoutOverwritingAnotherIdentity() {
+        doReturn(1L, 0L).when(redisTemplate)
+                .execute(any(RedisScript.class), anyList(), any(Object[].class));
+
+        boolean firstCreated = store.create(session("same-id", 1L, 2L, "first-hash"), "first-hash", TTL);
+        boolean secondCreated = store.create(session("same-id", 9L, 8L, "second-hash"), "second-hash", TTL);
+
+        assertThat(firstCreated).isTrue();
+        assertThat(secondCreated).isFalse();
+        ArgumentCaptor<RedisScript<Long>> scripts = redisScriptCaptor();
+        verify(redisTemplate, times(2)).execute(
+                scripts.capture(), anyList(), any(Object[].class));
+        assertThat(scripts.getAllValues())
+                .allSatisfy(script -> assertThat(script.getScriptAsString()).contains("EXISTS", "'NX'"));
+        verify(redisTemplate, never()).delete(any(String.class));
+    }
+
+    @Test
+    void shouldFindStoredStringIdentitySession() throws Exception {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        AuthSession expected = session("s1", "refresh-hash");
+        AuthSession expected = session("s1", 1L, 2L, "refresh-hash");
         when(valueOperations.get("saas:portal:auth:session:s1"))
-                .thenReturn(objectMapper.writeValueAsString(expected));
+                .thenReturn(storedSessionJson(expected));
 
         Optional<AuthSession> actual = store.find("s1");
 
@@ -108,60 +143,108 @@ class RedisSessionStoreTest {
     }
 
     @Test
-    void shouldReplaceRefreshHashAndRefreshAllRelatedTtls() throws Exception {
+    void shouldPreserveAnEmptyPermissionSetAcrossLuaSafeSerialization() throws Exception {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(redisTemplate.opsForSet()).thenReturn(setOperations);
-        AuthSession current = session("s1", "old-hash");
+        AuthSession expected = new AuthSession(
+                "s1", 1L, 2L, "admin", "Administrator", Set.of(), "refresh-hash");
+        when(valueOperations.get("saas:portal:auth:session:s1"))
+                .thenReturn(storedSessionJson(expected));
 
-        store.replaceRefreshToken(current, "new-hash", TTL);
-
-        verify(redisTemplate).delete("saas:portal:auth:refresh:old-hash");
-        verify(valueOperations).set("saas:portal:auth:refresh:new-hash", "s1", TTL);
-        ArgumentCaptor<String> serialized = ArgumentCaptor.forClass(String.class);
-        verify(valueOperations).set(eq("saas:portal:auth:session:s1"), serialized.capture(), eq(TTL));
-        assertThat(objectMapper.readValue(serialized.getValue(), AuthSession.class).refreshTokenHash())
-                .isEqualTo("new-hash");
-        verify(setOperations).add(eq("saas:portal:auth:user-sessions:1:2"), eq(new String[]{"s1"}));
-        verify(redisTemplate).expire("saas:portal:auth:user-sessions:1:2", TTL);
+        assertThat(store.find("s1")).contains(expected);
     }
 
     @Test
-    void shouldDeleteOneSessionWithoutDeletingOtherDeviceSet() throws Exception {
-        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(redisTemplate.opsForSet()).thenReturn(setOperations);
-        AuthSession current = session("s1", "refresh-hash");
-        when(valueOperations.get("saas:portal:auth:session:s1"))
-                .thenReturn(objectMapper.writeValueAsString(current));
-        when(setOperations.size("saas:portal:auth:user-sessions:1:2")).thenReturn(1L);
+    void shouldRotateRefreshExactlyOnceAndRemoveOldHashInOneLuaCall() throws Exception {
+        AuthSession rotated = session("s1", 1L, 2L, "new-hash");
+        doReturn(storedSessionJson(rotated), (Object) null).when(redisTemplate)
+                .execute(any(RedisScript.class), anyList(), any(Object[].class));
+
+        Optional<AuthSession> first = store.rotateRefreshToken("old-hash", "new-hash", TTL);
+        Optional<AuthSession> repeated = store.rotateRefreshToken("old-hash", "another-hash", TTL);
+
+        assertThat(first).contains(rotated);
+        assertThat(repeated).isEmpty();
+        ArgumentCaptor<RedisScript<String>> scripts = redisScriptCaptor();
+        verify(redisTemplate).execute(
+                scripts.capture(),
+                eq(List.of(
+                        "saas:portal:auth:refresh:old-hash",
+                        "saas:portal:auth:refresh:new-hash")),
+                eq("saas:portal:auth:session:"),
+                eq("saas:portal:auth:user-sessions:"),
+                eq("old-hash"), eq("new-hash"), eq(TTL_MILLIS));
+        assertThat(scripts.getValue().getScriptAsString())
+                .contains("GET", "EXISTS", "redis.call('DEL', KEYS[1])", "SADD", "PEXPIRE");
+        verify(redisTemplate, never()).delete("saas:portal:auth:refresh:old-hash");
+    }
+
+    @Test
+    void shouldNotReviveARevokedSessionWhenRotationRunsAfterDelete() {
+        doReturn(1L, (Object) null).when(redisTemplate)
+                .execute(any(RedisScript.class), anyList(), any(Object[].class));
+
+        store.delete("s1");
+        Optional<AuthSession> rotated = store.rotateRefreshToken("old-hash", "new-hash", TTL);
+
+        assertThat(rotated).isEmpty();
+        InOrder order = inOrder(redisTemplate);
+        order.verify(redisTemplate).execute(
+                any(RedisScript.class),
+                eq(List.of("saas:portal:auth:session:s1")),
+                eq("saas:portal:auth:refresh:"), eq("saas:portal:auth:user-sessions:"));
+        order.verify(redisTemplate).execute(
+                any(RedisScript.class),
+                eq(List.of(
+                        "saas:portal:auth:refresh:old-hash",
+                        "saas:portal:auth:refresh:new-hash")),
+                any(Object[].class));
+        verify(valueOperations, never()).set(any(), any(), any(Duration.class));
+    }
+
+    @Test
+    void shouldDeleteOneSessionAndItsRefreshAndIndexAtomically() {
+        doReturn(1L).when(redisTemplate)
+                .execute(any(RedisScript.class), anyList(), any(Object[].class));
 
         store.delete("s1");
 
-        verify(redisTemplate).delete("saas:portal:auth:session:s1");
-        verify(redisTemplate).delete("saas:portal:auth:refresh:refresh-hash");
-        verify(setOperations).remove("saas:portal:auth:user-sessions:1:2", "s1");
-        verify(redisTemplate, never()).delete("saas:portal:auth:user-sessions:1:2");
+        ArgumentCaptor<RedisScript<Long>> script = redisScriptCaptor();
+        verify(redisTemplate).execute(
+                script.capture(),
+                eq(List.of("saas:portal:auth:session:s1")),
+                eq("saas:portal:auth:refresh:"), eq("saas:portal:auth:user-sessions:"));
+        assertThat(script.getValue().getScriptAsString())
+                .contains("GET", "DEL", "SREM", "SCARD");
+        verify(redisTemplate, never()).delete(any(String.class));
     }
 
     @Test
-    void shouldDeleteAllSessionsAndRefreshHashesForOneUser() throws Exception {
-        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(redisTemplate.opsForSet()).thenReturn(setOperations);
-        AuthSession first = session("s1", "first-hash");
-        AuthSession second = session("s2", "second-hash");
-        when(setOperations.members("saas:portal:auth:user-sessions:1:2"))
-                .thenReturn(Set.of("s1", "s2"));
-        when(valueOperations.get("saas:portal:auth:session:s1"))
-                .thenReturn(objectMapper.writeValueAsString(first));
-        when(valueOperations.get("saas:portal:auth:session:s2"))
-                .thenReturn(objectMapper.writeValueAsString(second));
+    void shouldDeleteAllUserSessionsAndRefreshMappingsAtomically() {
+        doReturn(2L).when(redisTemplate)
+                .execute(any(RedisScript.class), anyList(), any(Object[].class));
 
         store.deleteAll(1L, 2L);
 
-        verify(redisTemplate).delete("saas:portal:auth:session:s1");
-        verify(redisTemplate).delete("saas:portal:auth:session:s2");
-        verify(redisTemplate).delete("saas:portal:auth:refresh:first-hash");
-        verify(redisTemplate).delete("saas:portal:auth:refresh:second-hash");
-        verify(redisTemplate).delete("saas:portal:auth:user-sessions:1:2");
+        ArgumentCaptor<RedisScript<Long>> script = redisScriptCaptor();
+        verify(redisTemplate).execute(
+                script.capture(),
+                eq(List.of("saas:portal:auth:user-sessions:1:2")),
+                eq("saas:portal:auth:session:"), eq("saas:portal:auth:refresh:"));
+        assertThat(script.getValue().getScriptAsString())
+                .contains("SMEMBERS", "GET", "DEL");
+        verify(redisTemplate, never()).delete(any(String.class));
+    }
+
+    @Test
+    void shouldUseServerGeneratedHighEntropyUrlSafeSessionIds() {
+        SessionIdGenerator generator = new SessionIdGenerator();
+
+        String first = generator.generate();
+        String second = generator.generate();
+
+        assertThat(first).isNotEqualTo(second);
+        assertThat(first).matches("[A-Za-z0-9_-]{43}");
+        assertThat(first).doesNotContain("=", "+", "/");
     }
 
     @Test
@@ -181,24 +264,31 @@ class RedisSessionStoreTest {
                 });
     }
 
-    private AuthSession session(String sessionId, String refreshTokenHash) {
+    private AuthSession session(String sessionId, long tenantId, long userId, String refreshTokenHash) {
         return new AuthSession(
                 sessionId,
-                1L,
-                2L,
+                tenantId,
+                userId,
                 "admin",
                 "Administrator",
                 Set.of("system:user:list"),
                 refreshTokenHash);
     }
 
-    private static Set<String> allStringArguments(Object... mocks) {
-        return Arrays.stream(mocks)
-                .flatMap(mockObject -> mockingDetails(mockObject).getInvocations().stream())
-                .map(invocation -> invocation.getArguments())
-                .flatMap(arguments -> Stream.of(arguments))
-                .filter(String.class::isInstance)
-                .map(String.class::cast)
-                .collect(java.util.stream.Collectors.toSet());
+    private String storedSessionJson(AuthSession session) throws Exception {
+        return objectMapper.writeValueAsString(Map.of(
+                "sessionId", session.sessionId(),
+                "tenantId", Long.toString(session.tenantId()),
+                "userId", Long.toString(session.userId()),
+                "username", session.username(),
+                "displayName", session.displayName(),
+                "permissions", session.permissions().stream().collect(Collectors.toMap(
+                        Function.identity(), ignored -> Boolean.TRUE)),
+                "refreshTokenHash", session.refreshTokenHash()));
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static <T> ArgumentCaptor<RedisScript<T>> redisScriptCaptor() {
+        return (ArgumentCaptor) ArgumentCaptor.forClass(RedisScript.class);
     }
 }

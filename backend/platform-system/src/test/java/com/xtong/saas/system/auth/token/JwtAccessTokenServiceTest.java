@@ -1,8 +1,10 @@
 package com.xtong.saas.system.auth.token;
 
 import com.xtong.saas.system.auth.config.AuthProperties;
+import com.xtong.saas.system.auth.config.PasswordEncoderConfig;
 import com.xtong.saas.system.auth.model.AuthenticatedUser;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
@@ -145,6 +147,23 @@ class JwtAccessTokenServiceTest {
                 Duration.ofMinutes(15)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("accessTokenTtl");
+    }
+
+    @Test
+    void shouldBindDesignedAccessAndRefreshTtlDefaults() {
+        new ApplicationContextRunner()
+                .withUserConfiguration(PasswordEncoderConfig.class)
+                .withPropertyValues(
+                        "saas.auth.jwt-secret=" + JWT_SECRET,
+                        "saas.auth.login-failure-limit=5",
+                        "saas.auth.login-failure-window=15m",
+                        "saas.auth.login-lock-duration=15m")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    AuthProperties properties = context.getBean(AuthProperties.class);
+                    assertThat(properties.accessTokenTtl()).isEqualTo(Duration.ofMinutes(15));
+                    assertThat(properties.refreshTokenTtl()).isEqualTo(Duration.ofDays(7));
+                });
     }
 
     private static AuthProperties properties(Duration accessTokenTtl) {

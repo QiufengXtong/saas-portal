@@ -4,6 +4,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.DefaultValue;
 import org.springframework.validation.annotation.Validated;
 
 import java.nio.charset.StandardCharsets;
@@ -14,8 +15,8 @@ import java.time.Duration;
 @Validated
 public record AuthProperties(
         @NotBlank String jwtSecret,
-        @NotNull Duration accessTokenTtl,
-        @NotNull Duration refreshTokenTtl,
+        @NotNull @DefaultValue("15m") Duration accessTokenTtl,
+        @NotNull @DefaultValue("7d") Duration refreshTokenTtl,
         @Min(1) int loginFailureLimit,
         @NotNull Duration loginFailureWindow,
         @NotNull Duration loginLockDuration) {
