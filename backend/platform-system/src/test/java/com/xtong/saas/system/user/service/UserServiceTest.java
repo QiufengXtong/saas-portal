@@ -1,0 +1,195 @@
+package com.xtong.saas.system.user.service;
+
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.xtong.saas.common.exception.BusinessException;
+import com.xtong.saas.system.auth.api.SessionRevocationService;
+import com.xtong.saas.system.role.entity.SystemUserRole;
+import com.xtong.saas.system.role.mapper.SystemRoleMapper;
+import com.xtong.saas.system.role.mapper.SystemUserRoleMapper;
+import com.xtong.saas.system.tenant.context.TenantScope;
+import com.xtong.saas.system.user.dto.CreateUserDTO;
+import com.xtong.saas.system.user.dto.ResetPasswordDTO;
+import com.xtong.saas.system.user.dto.UserQueryDTO;
+import com.xtong.saas.system.user.entity.SystemUser;
+import com.xtong.saas.system.user.enums.UserStatus;
+import com.xtong.saas.system.user.exception.UserErrorCode;
+import com.xtong.saas.system.user.mapper.SystemUserMapper;
+import com.xtong.saas.system.user.service.impl.UserServiceImpl;
+import jakarta.validation.Validation;
+import jakarta.validation.Validator;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Set;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/** 验证租户用户服务的租户隔离、管理员保护、密码规则和提交后会话撤销。 */
+class UserServiceTest {
+
+    private final SystemUserMapper userMapper = mock(SystemUserMapper.class);
+    private final SystemRoleMapper roleMapper = mock(SystemRoleMapper.class);
+    private final SystemUserRoleMapper userRoleMapper = mock(SystemUserRoleMapper.class);
+    private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
+    private final SessionRevocationService sessionRevocationService = mock(SessionRevocationService.class);
+    private final UserService service = new UserServiceImpl(
+            userMapper, roleMapper, userRoleMapper, passwordEncoder, sessionRevocationService);
+
+    @AfterEach
+    void shouldClearTransactionSynchronization() {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void shouldRejectDuplicateUsernameInCurrentTenant() {
+        when(userMapper.selectCount(any())).thenReturn(1L);
+
+        TenantScope.run(1L, () -> assertThatThrownBy(() -> service.create(createCommand(Set.of())))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).getErrorCode())
+                .isEqualTo(UserErrorCode.USERNAME_ALREADY_EXISTS));
+
+        verify(userMapper, never()).insert(any(SystemUser.class));
+    }
+
+    @Test
+    void shouldRejectRoleFromAnotherTenant() {
+        when(roleMapper.countByTenantAndIds(1L, Set.of(99L))).thenReturn(0L);
+
+        TenantScope.run(1L, () -> assertThatThrownBy(() -> service.assignRoles(10L, Set.of(99L)))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).getErrorCode())
+                .isEqualTo(UserErrorCode.INVALID_ROLE_ASSIGNMENT));
+    }
+
+    @Test
+    void shouldRejectDeletingCurrentUser() {
+        TenantScope.run(1L, () -> assertThatThrownBy(() -> service.delete(10L, 10L))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).getErrorCode())
+                .isEqualTo(UserErrorCode.CANNOT_OPERATE_CURRENT_USER));
+
+        verify(userMapper, never()).deleteById(10L);
+    }
+
+    @Test
+    void shouldRevokeSessionsOnlyAfterCommittedPasswordReset() {
+        SystemUser user = user(10L, UserStatus.ENABLED);
+        when(userMapper.selectOne(any())).thenReturn(user);
+        when(passwordEncoder.encode("NewPassword123")).thenReturn("bcrypt");
+        TransactionSynchronizationManager.initSynchronization();
+
+        TenantScope.run(1L, () -> service.resetPassword(10L, new ResetPasswordDTO("NewPassword123")));
+
+        verify(sessionRevocationService, never()).revokeAllUserSessions(1L, 10L);
+        afterCommit();
+        verify(sessionRevocationService).revokeAllUserSessions(1L, 10L);
+        assertThat(user.getPasswordHash()).isEqualTo("bcrypt");
+        assertThat(user.getPasswordChangedAt()).isNotNull();
+    }
+
+    @Test
+    void shouldPhysicallyReplaceRolesAndRevokeSessionsAfterCommit() {
+        SystemUser user = user(10L, UserStatus.ENABLED);
+        when(userMapper.selectOne(any())).thenReturn(user);
+        when(roleMapper.countByTenantAndIds(1L, Set.of(8L, 9L))).thenReturn(2L);
+        TransactionSynchronizationManager.initSynchronization();
+
+        TenantScope.run(1L, () -> service.assignRoles(10L, Set.of(8L, 9L)));
+
+        verify(userRoleMapper).deleteByUser(1L, 10L);
+        verify(userRoleMapper, org.mockito.Mockito.times(2)).insert(any(SystemUserRole.class));
+        verify(sessionRevocationService, never()).revokeAllUserSessions(1L, 10L);
+        afterCommit();
+        verify(sessionRevocationService).revokeAllUserSessions(1L, 10L);
+    }
+
+    @Test
+    void shouldRejectDisablingLastEnabledTenantAdministrator() {
+        SystemUser user = user(10L, UserStatus.ENABLED);
+        when(userMapper.selectOne(any())).thenReturn(user);
+        when(roleMapper.existsTenantAdminRole(1L, 10L)).thenReturn(true);
+        when(roleMapper.countEnabledTenantAdminUsers(1L)).thenReturn(1L);
+
+        TenantScope.run(1L, () -> assertThatThrownBy(() -> service.disable(10L, 11L))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).getErrorCode())
+                .isEqualTo(UserErrorCode.LAST_TENANT_ADMIN));
+
+        verify(userMapper, never()).updateById(any(SystemUser.class));
+    }
+
+    @Test
+    void shouldRejectLoginForDisabledUser() {
+        when(userMapper.selectOne(any())).thenReturn(user(10L, UserStatus.DISABLED));
+
+        assertThatThrownBy(() -> service.requireEnabledForLogin(1L, "alice"))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).getErrorCode())
+                .isEqualTo(UserErrorCode.USER_DISABLED);
+    }
+
+    @Test
+    void shouldEnforcePageLimitAndUtf8PasswordLimitWithJakartaValidation() {
+        Validator validator = Validation.buildDefaultValidatorFactory().getValidator();
+
+        assertThat(validator.validate(new UserQueryDTO(1, 501, null, null)))
+                .extracting(violation -> violation.getPropertyPath().toString())
+                .contains("pageSize");
+        assertThat(validator.validate(new ResetPasswordDTO("密码密码密码密码密码密码密码密码密码密码密码密码密码密码密码密码密码密码密码密码密码密码密码密码密")))
+                .extracting(violation -> violation.getPropertyPath().toString())
+                .contains("passwordWithinUtf8Limit");
+    }
+
+    @Test
+    void shouldMapUserIdsToStringsWithoutPasswordHash() {
+        SystemUser user = user(10L, UserStatus.ENABLED);
+        user.setTenantId(1L);
+        user.setPasswordHash("must-not-leak");
+        when(userMapper.selectOne(any())).thenReturn(user);
+        when(userRoleMapper.selectRoleIdsByUserId(1L, 10L)).thenReturn(List.of(8L));
+
+        TenantScope.run(1L, () -> {
+            Object view = service.get(10L);
+            assertThat(view).hasFieldOrPropertyWithValue("id", "10");
+            assertThat(view).hasFieldOrPropertyWithValue("tenantId", "1");
+            assertThat(view.toString()).doesNotContain("must-not-leak");
+        });
+    }
+
+    private void afterCommit() {
+        List<TransactionSynchronization> synchronizations = TransactionSynchronizationManager.getSynchronizations();
+        synchronizations.forEach(TransactionSynchronization::afterCommit);
+        TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    private CreateUserDTO createCommand(Set<Long> roleIds) {
+        return new CreateUserDTO("alice", "Alice", "Password123", "alice@example.com", "13800000000", roleIds);
+    }
+
+    private SystemUser user(long id, UserStatus status) {
+        SystemUser user = new SystemUser();
+        user.setId(id);
+        user.setTenantId(1L);
+        user.setUsername("alice");
+        user.setDisplayName("Alice");
+        user.setStatus(status);
+        user.setCreatedAt(LocalDateTime.now());
+        user.setUpdatedAt(LocalDateTime.now());
+        return user;
+    }
+}
