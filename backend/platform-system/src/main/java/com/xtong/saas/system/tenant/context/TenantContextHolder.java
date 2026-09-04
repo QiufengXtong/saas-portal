@@ -27,7 +27,8 @@ public final class TenantContextHolder {
         TENANT_ID.set(tenantId);
     }
 
-    static void clear() {
+    /** 清除当前线程租户，供请求边界在异常与复用线程前执行兜底清理。 */
+    public static void clear() {
         TENANT_ID.remove();
     }
 }
