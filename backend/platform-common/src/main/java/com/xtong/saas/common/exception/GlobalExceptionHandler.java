@@ -41,8 +41,10 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Result<Void>> handleMethodArgumentNotValidException(
             MethodArgumentNotValidException exception) {
         String message = exception.getBindingResult().getFieldErrors().stream()
+                .filter(fieldError -> hasText(fieldError.getDefaultMessage()))
+                .sorted(Comparator.comparing(FieldError::getField, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(FieldError::getDefaultMessage, Comparator.nullsLast(Comparator.naturalOrder())))
                 .map(FieldError::getDefaultMessage)
-                .filter(this::hasText)
                 .findFirst()
                 .orElse(CommonErrorCode.INVALID_PARAMETER.message());
         return failure(CommonErrorCode.INVALID_PARAMETER, message);

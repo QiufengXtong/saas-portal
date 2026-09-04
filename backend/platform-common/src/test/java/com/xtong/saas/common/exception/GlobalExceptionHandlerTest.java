@@ -55,6 +55,26 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void shouldSelectDeterministicFieldMessageWhenFieldErrorsAreAddedInReverseOrder()
+            throws NoSuchMethodException {
+        BeanPropertyBindingResult bindingResult = new BeanPropertyBindingResult(new LoginCommand(""), "loginCommand");
+        bindingResult.addError(new FieldError("loginCommand", "username", "sensitive-username", false,
+                null, null, "用户名不能为空"));
+        bindingResult.addError(new FieldError("loginCommand", "account", "sensitive-account", false,
+                null, null, null));
+        bindingResult.addError(new FieldError("loginCommand", "tenantCode", "sensitive-tenant", false,
+                null, null, "租户编码不能为空"));
+
+        var response = handler.handleMethodArgumentNotValidException(
+                new MethodArgumentNotValidException(methodParameter(), bindingResult));
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals(1001, response.getBody().code());
+        assertEquals("租户编码不能为空", response.getBody().message());
+        assertFalse(response.getBody().message().contains("sensitive-"));
+    }
+
+    @Test
     void shouldReturnConstraintMessageWithoutRejectedValue() {
         Validator validator = Validation.buildDefaultValidatorFactory().getValidator();
         var violations = validator.validate(new LoginCommand(""));
