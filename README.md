@@ -2,8 +2,7 @@
 
 # saas-portal
 
-`saas-portal` 是一个前后端分离的 SaaS 平台基础骨架。当前阶段只提供可启动的工程结构、基础配置和健康状态页面，不包含认证、权限、菜单或业务
-CRUD。
+`saas-portal` 是一个前后端分离的 SaaS 平台基础骨架。后端已提供多租户 System IAM 基础能力，包括首租户初始化、用户与角色管理、菜单权限目录、JWT 访问令牌及 Redis 刷新会话。
 
 ## 技术栈
 
@@ -97,7 +96,41 @@ Set-Location frontend
 Copy-Item .env.example .env
 ```
 
-`.env` 包含前后端及基础服务的宿主机端口、MySQL 数据库和密码配置，不应提交真实密码。Redis 当前采用空密码模式。
+`.env` 包含前后端端口、MySQL、Redis、认证及首次初始化配置，不应提交真实密码。首次启动空库前，至少必须设置：
+
+- `JWT_SECRET`：不少于 32 个 UTF-8 字节的随机密钥；
+- `BOOTSTRAP_TENANT_CODE`、`BOOTSTRAP_TENANT_NAME`：首租户编码和名称；
+- `BOOTSTRAP_ADMIN_USERNAME`、`BOOTSTRAP_ADMIN_PASSWORD`：首管理员账号和密码，密码长度为 8 至 72 个 UTF-8 字节。
+
+`.env.example` 仅含非生产占位值，启动前必须更换密码和密钥。`REDIS_PASSWORD` 留空表示无密码，填写后应用和 Compose Redis 会使用同一密码。
+
+## 数据库迁移与首次初始化
+
+应用启动时由 Flyway 按顺序执行 `backend/platform-system/src/main/resources/db/migration` 中的版本脚本：V1 创建 IAM 表，V2 初始化全局菜单与 19 个固定权限码，V3 创建多实例首租户初始化锁。
+
+仅当数据库中不存在任何租户时，应用才使用 `BOOTSTRAP_*` 创建首租户、管理员、内置 `TENANT_ADMIN` 角色及用户角色关联；已有租户时不会再次创建。迁移脚本是表结构和权限目录的唯一演进入口，请勿修改已发布版本，应新增更高版本脚本。
+
+## 认证与授权
+
+匿名接口：
+
+```text
+POST /api/v1/auth/login    使用 tenantCode、username、password 登录
+POST /api/v1/auth/refresh  轮换刷新令牌并签发新的令牌对
+GET  /api/v1/health        健康状态
+```
+
+认证接口：
+
+```text
+POST /api/v1/auth/logout   注销当前会话
+GET  /api/v1/auth/me       读取当前用户
+/api/v1/system/users       用户管理
+/api/v1/system/roles       角色管理
+/api/v1/system/menus       菜单树和权限码目录
+```
+
+访问认证接口时使用 HTTP 请求头 `Authorization: Bearer <access-token>`；示例中的 `<access-token>` 是占位符。刷新令牌按会话在 Redis 中保存摘要并轮换，支持同一用户多设备登录。权限码采用 `领域:资源:动作` 格式，例如 `system:user:list`；内置 `TENANT_ADMIN` 角色拥有全部已启用权限，其他角色通过菜单关联获得权限。
 
 ## Docker Compose 启动
 
@@ -109,7 +142,7 @@ docker compose up --build
 
 后端会等待 MySQL 和 Redis 健康后启动，前端会等待后端健康后启动。数据分别持久化到 `mysql/data` 和 `redis/data`，这些运行目录不会提交到版本库。
 
-当前认证会话的 Lua 脚本按项目现有 Compose 与应用配置仅支持单节点 Redis，不支持 Redis Cluster；切换到 Cluster 前需要重新设计跨 Key 的 hash slot 方案。
+当前认证会话 Lua 脚本只支持单节点 Redis，不支持 Redis Cluster；切换到 Cluster 前需要重新设计跨 Key 的 hash slot 方案。
 
 ## 健康检查
 
@@ -128,4 +161,12 @@ GET /api/v1/health
 
 ## 验证限制
 
-Docker 配置已生成，但因本机未安装 Docker，未进行 Compose 解析、镜像构建或容器运行验证。
+后端验证命令：
+
+```powershell
+$env:JAVA_HOME = 'D:\develop\environment\Java\jdk-21.0.12'
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml package
+```
+
+本机未安装 Docker，因此未执行 `docker compose config`、镜像构建、MySQL/Redis 容器联调；Maven/H2 测试不代表 Docker 验证。

@@ -1,3 +1,4 @@
+# 文件作用：统一编排前端、后端、MySQL 和单节点 Redis，并从 .env 透传运行配置。
 name: saas-portal
 
 services:
@@ -26,6 +27,16 @@ services:
       REDIS_HOST: ${REDIS_HOST:-redis}
       REDIS_PORT: ${REDIS_PORT:-6379}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be configured in .env}
+      ACCESS_TOKEN_TTL: ${ACCESS_TOKEN_TTL:-15m}
+      REFRESH_TOKEN_TTL: ${REFRESH_TOKEN_TTL:-7d}
+      LOGIN_FAILURE_LIMIT: ${LOGIN_FAILURE_LIMIT:-5}
+      LOGIN_FAILURE_WINDOW: ${LOGIN_FAILURE_WINDOW:-15m}
+      LOGIN_LOCK_DURATION: ${LOGIN_LOCK_DURATION:-15m}
+      BOOTSTRAP_TENANT_CODE: ${BOOTSTRAP_TENANT_CODE:?BOOTSTRAP_TENANT_CODE must be configured in .env}
+      BOOTSTRAP_TENANT_NAME: ${BOOTSTRAP_TENANT_NAME:?BOOTSTRAP_TENANT_NAME must be configured in .env}
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:?BOOTSTRAP_ADMIN_USERNAME must be configured in .env}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?BOOTSTRAP_ADMIN_PASSWORD must be configured in .env}
       TZ: Asia/Shanghai
     depends_on:
       mysql:
