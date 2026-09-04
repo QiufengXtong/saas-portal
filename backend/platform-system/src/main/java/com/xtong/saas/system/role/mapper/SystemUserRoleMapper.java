@@ -28,4 +28,21 @@ public interface SystemUserRoleMapper extends BaseMapper<SystemUserRole> {
               AND user_id = #{userId}
             """)
     int deleteByUser(@Param("tenantId") long tenantId, @Param("userId") long userId);
+
+    @Select("""
+            SELECT COUNT(*)
+            FROM sys_user_role
+            WHERE tenant_id = #{tenantId}
+              AND role_id = #{roleId}
+            """)
+    long countByRole(@Param("tenantId") long tenantId, @Param("roleId") long roleId);
+
+    @Select("""
+            SELECT DISTINCT user_id
+            FROM sys_user_role
+            WHERE tenant_id = #{tenantId}
+              AND role_id = #{roleId}
+            ORDER BY user_id
+            """)
+    List<Long> selectUserIdsByRole(@Param("tenantId") long tenantId, @Param("roleId") long roleId);
 }

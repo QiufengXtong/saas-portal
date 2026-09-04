@@ -13,6 +13,15 @@ import java.util.Set;
 public interface SystemRoleMapper extends BaseMapper<SystemRole> {
 
     @Select("""
+            SELECT COUNT(*)
+            FROM sys_role
+            WHERE tenant_id = #{tenantId}
+              AND role_code = #{roleCode}
+            """)
+    long countByTenantAndCodeIncludingDeleted(
+            @Param("tenantId") long tenantId, @Param("roleCode") String roleCode);
+
+    @Select("""
             SELECT EXISTS (
                 SELECT 1
                 FROM sys_user_role ur
