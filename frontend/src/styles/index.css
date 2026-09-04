@@ -1,0 +1,22 @@
+:root {
+    color: #1f2937;
+    background: #f5f7fa;
+    font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+}
+
+a {
+    color: var(--el-color-primary);
+    text-decoration: none;
+}

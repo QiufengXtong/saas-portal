@@ -1,0 +1,32 @@
+server:
+  port: ${BACKEND_PORT:8080}
+
+spring:
+  application:
+    name: saas-portal
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:saas_portal}?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&connectTimeout=3000&socketTimeout=3000
+    username: ${MYSQL_USERNAME:saas_portal}
+    password: ${MYSQL_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      initialization-fail-timeout: -1
+      connection-timeout: 3000
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      connect-timeout: 2s
+      timeout: 2s
+
+management:
+  endpoints:
+    web:
+      base-path: /api/v1
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-components: always
+      show-details: never
