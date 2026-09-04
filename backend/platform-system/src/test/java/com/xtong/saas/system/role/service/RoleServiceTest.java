@@ -11,6 +11,7 @@ import com.xtong.saas.system.role.mapper.SystemRoleMenuMapper;
 import com.xtong.saas.system.role.mapper.SystemUserRoleMapper;
 import com.xtong.saas.system.role.service.impl.RoleServiceImpl;
 import com.xtong.saas.system.tenant.context.TenantScope;
+import com.xtong.saas.system.tenant.mapper.SystemTenantMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -33,9 +34,10 @@ class RoleServiceTest {
     private final SystemUserRoleMapper userRoleMapper = mock(SystemUserRoleMapper.class);
     private final SystemRoleMenuMapper roleMenuMapper = mock(SystemRoleMenuMapper.class);
     private final SystemMenuMapper menuMapper = mock(SystemMenuMapper.class);
+    private final SystemTenantMapper tenantMapper = mock(SystemTenantMapper.class);
     private final SessionRevocationService sessionRevocationService = mock(SessionRevocationService.class);
     private final RoleService service = new RoleServiceImpl(
-            roleMapper, userRoleMapper, roleMenuMapper, menuMapper, sessionRevocationService);
+            roleMapper, userRoleMapper, roleMenuMapper, menuMapper, tenantMapper, sessionRevocationService);
 
     @AfterEach
     void shouldClearTransactionSynchronization() {
@@ -55,6 +57,23 @@ class RoleServiceTest {
                 .isEqualTo(RoleErrorCode.ROLE_IN_USE));
 
         verify(roleMapper, never()).deleteById(8L);
+    }
+
+    @Test
+    void shouldLockTenantBeforeCheckingRoleAssociationsForDelete() {
+        when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
+        when(roleMapper.selectOne(any())).thenReturn(role(8L, false));
+        when(userRoleMapper.countByRole(1L, 8L)).thenReturn(2L);
+
+        TenantScope.run(1L, () -> assertThatThrownBy(() -> service.delete(8L))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).getErrorCode())
+                .isEqualTo(RoleErrorCode.ROLE_IN_USE));
+
+        org.mockito.InOrder order = inOrder(tenantMapper, roleMapper, userRoleMapper);
+        order.verify(tenantMapper).lockByIdForAdminInvariant(1L);
+        order.verify(roleMapper).selectOne(any());
+        order.verify(userRoleMapper).countByRole(1L, 8L);
     }
 
     @Test
@@ -97,6 +116,7 @@ class RoleServiceTest {
 
     @Test
     void shouldReplaceMenusAndRevokeAffectedUsersOnlyAfterCommit() {
+        when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
         when(roleMapper.selectOne(any())).thenReturn(role(8L, false));
         when(menuMapper.countEnabledByIds(Set.of(101L, 102L))).thenReturn(2L);
         when(userRoleMapper.selectUserIdsByRole(1L, 8L)).thenReturn(List.of(10L, 11L));
@@ -113,7 +133,26 @@ class RoleServiceTest {
     }
 
     @Test
+    void shouldLockTenantBeforeReplacingMenus() {
+        when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
+        when(roleMapper.selectOne(any())).thenReturn(role(8L, false));
+        when(menuMapper.countEnabledByIds(Set.of(101L))).thenReturn(1L);
+        when(userRoleMapper.selectUserIdsByRole(1L, 8L)).thenReturn(List.of());
+
+        TenantScope.run(1L, () -> service.assignMenus(8L, Set.of(101L)));
+
+        org.mockito.InOrder order = inOrder(tenantMapper, roleMapper, menuMapper, userRoleMapper, roleMenuMapper);
+        order.verify(tenantMapper).lockByIdForAdminInvariant(1L);
+        order.verify(roleMapper).selectOne(any());
+        order.verify(menuMapper).countEnabledByIds(Set.of(101L));
+        order.verify(userRoleMapper).selectUserIdsByRole(1L, 8L);
+        order.verify(roleMenuMapper).deleteByRole(1L, 8L);
+        order.verify(roleMenuMapper).insertBatch(1L, 8L, Set.of(101L));
+    }
+
+    @Test
     void shouldNotRevokeSessionsWhenMenuAssignmentRollsBack() {
+        when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
         when(roleMapper.selectOne(any())).thenReturn(role(8L, false));
         when(menuMapper.countEnabledByIds(Set.of(101L))).thenReturn(1L);
         when(userRoleMapper.selectUserIdsByRole(1L, 8L)).thenReturn(List.of(10L));
@@ -122,6 +161,78 @@ class RoleServiceTest {
         TenantScope.run(1L, () -> service.assignMenus(8L, Set.of(101L)));
 
         afterRollback();
+        verify(sessionRevocationService, never()).revokeAllUserSessions(1L, 10L);
+    }
+
+    @Test
+    void shouldRevokeAffectedUsersOnlyAfterCommittedRoleDisable() {
+        when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
+        when(roleMapper.selectOne(any())).thenReturn(role(8L, false));
+        when(userRoleMapper.selectUserIdsByRole(1L, 8L)).thenReturn(List.of(10L));
+        TransactionSynchronizationManager.initSynchronization();
+
+        TenantScope.run(1L, () -> service.disable(8L));
+
+        verify(sessionRevocationService, never()).revokeAllUserSessions(1L, 10L);
+        afterCommit();
+        verify(sessionRevocationService).revokeAllUserSessions(1L, 10L);
+    }
+
+    @Test
+    void shouldNotRevokeAffectedUsersWhenRoleDisableRollsBack() {
+        when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
+        when(roleMapper.selectOne(any())).thenReturn(role(8L, false));
+        when(userRoleMapper.selectUserIdsByRole(1L, 8L)).thenReturn(List.of(10L));
+        TransactionSynchronizationManager.initSynchronization();
+
+        TenantScope.run(1L, () -> service.disable(8L));
+
+        afterRollback();
+        verify(sessionRevocationService, never()).revokeAllUserSessions(1L, 10L);
+    }
+
+    @Test
+    void shouldRevokeAffectedUsersOnlyAfterCommittedRoleEnable() {
+        SystemRole disabledRole = role(8L, false);
+        disabledRole.setStatus(RoleStatus.DISABLED);
+        when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
+        when(roleMapper.selectOne(any())).thenReturn(disabledRole);
+        when(userRoleMapper.selectUserIdsByRole(1L, 8L)).thenReturn(List.of(10L));
+        TransactionSynchronizationManager.initSynchronization();
+
+        TenantScope.run(1L, () -> service.enable(8L));
+
+        verify(sessionRevocationService, never()).revokeAllUserSessions(1L, 10L);
+        afterCommit();
+        verify(sessionRevocationService).revokeAllUserSessions(1L, 10L);
+    }
+
+    @Test
+    void shouldNotRevokeAffectedUsersWhenRoleEnableRollsBack() {
+        SystemRole disabledRole = role(8L, false);
+        disabledRole.setStatus(RoleStatus.DISABLED);
+        when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
+        when(roleMapper.selectOne(any())).thenReturn(disabledRole);
+        when(userRoleMapper.selectUserIdsByRole(1L, 8L)).thenReturn(List.of(10L));
+        TransactionSynchronizationManager.initSynchronization();
+
+        TenantScope.run(1L, () -> service.enable(8L));
+
+        afterRollback();
+        verify(sessionRevocationService, never()).revokeAllUserSessions(1L, 10L);
+    }
+
+    @Test
+    void shouldNotRevokeSessionsWhenRoleStatusIsUnchanged() {
+        SystemRole disabledRole = role(8L, false);
+        disabledRole.setStatus(RoleStatus.DISABLED);
+        when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
+        when(roleMapper.selectOne(any())).thenReturn(disabledRole);
+
+        TenantScope.run(1L, () -> service.disable(8L));
+
+        verify(roleMapper, never()).updateById(any(SystemRole.class));
+        verify(userRoleMapper, never()).selectUserIdsByRole(1L, 8L);
         verify(sessionRevocationService, never()).revokeAllUserSessions(1L, 10L);
     }
 

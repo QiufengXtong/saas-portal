@@ -40,3 +40,22 @@
 ## 注意事项
 
 - Maven 全局 `settings.xml` 仍报告 `servers` 节点位置警告，Mockito 在 JDK 21 仍报告动态附加 agent 的未来兼容性警告；所有测试均以成功结束。
+
+## 复审修复（Changes requested）
+
+### 修复内容
+
+- `RoleService.delete`、`assignMenus`、`enable` 和 `disable` 现在均在读取角色、检查关联或修改状态之前调用 Task 7 已使用的 `SystemTenantMapper.lockByIdForAdminInvariant(tenantId)`。该查询以当前 `sys_tenant` 行的 `FOR UPDATE` 锁串行化同一租户的用户角色分配、角色删除、菜单整体授权及状态敏感变更，不引入新的锁协议。
+- 新增 delete 与菜单整体授权的 `InOrder` 回归测试，验证租户锁先于角色读取、关联检查及关联物理替换。
+- 新增启用、停用状态变化的提交后撤销测试，以及启用、停用回滚不撤销和无状态变化不撤销测试；受影响用户集合仅在 `afterCommit` 调用 Task 7 会话撤销端口。
+
+### 复审 TDD 记录
+
+1. **RED**：先将租户锁依赖和顺序/会话测试写入 `RoleServiceTest`；聚焦构建在 test compile 阶段因 `RoleServiceImpl` 尚未接收 `SystemTenantMapper` 失败，符合预期。
+2. **GREEN**：注入并复用 Task 7 的锁 Mapper，且将锁前置到 delete、assignMenus 与状态变更路径；`RoleServiceTest` 14/14 通过。
+
+### 复审验证
+
+- `-pl platform-system -am -Dtest=RoleServiceTest -Dsurefire.failIfNoSpecifiedTests=false test`：14/14 通过。
+- `-pl platform-system -am test`：Common 16/16、System 51/51 通过。
+- 后端 reactor `test`：以 `BUILD SUCCESS` 结束；Common 16/16、System 51/51，Business 无测试，Boot 测试通过。

@@ -18,6 +18,7 @@ import com.xtong.saas.system.role.mapper.SystemUserRoleMapper;
 import com.xtong.saas.system.role.service.RoleService;
 import com.xtong.saas.system.role.vo.RoleVO;
 import com.xtong.saas.system.tenant.context.TenantContextHolder;
+import com.xtong.saas.system.tenant.mapper.SystemTenantMapper;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,6 +39,7 @@ public class RoleServiceImpl implements RoleService {
     private final SystemUserRoleMapper userRoleMapper;
     private final SystemRoleMenuMapper roleMenuMapper;
     private final SystemMenuMapper menuMapper;
+    private final SystemTenantMapper tenantMapper;
     private final SessionRevocationService sessionRevocationService;
 
     public RoleServiceImpl(
@@ -45,11 +47,13 @@ public class RoleServiceImpl implements RoleService {
             SystemUserRoleMapper userRoleMapper,
             SystemRoleMenuMapper roleMenuMapper,
             SystemMenuMapper menuMapper,
+            SystemTenantMapper tenantMapper,
             SessionRevocationService sessionRevocationService) {
         this.roleMapper = roleMapper;
         this.userRoleMapper = userRoleMapper;
         this.roleMenuMapper = roleMenuMapper;
         this.menuMapper = menuMapper;
+        this.tenantMapper = tenantMapper;
         this.sessionRevocationService = sessionRevocationService;
     }
 
@@ -106,26 +110,20 @@ public class RoleServiceImpl implements RoleService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void enable(long roleId) {
-        changeStatus(TenantContextHolder.requireTenantId(), roleId, RoleStatus.ENABLED);
+        changeStatus(TenantContextHolder.requireTenantId(), roleId, RoleStatus.ENABLED, false);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void disable(long roleId) {
-        long tenantId = TenantContextHolder.requireTenantId();
-        SystemRole role = requireRole(tenantId, roleId);
-        assertNotProtected(role);
-        if (role.getStatus() != RoleStatus.DISABLED) {
-            role.setStatus(RoleStatus.DISABLED);
-            roleMapper.updateById(role);
-            revokeAffectedUsersAfterCommit(tenantId, roleId);
-        }
+        changeStatus(TenantContextHolder.requireTenantId(), roleId, RoleStatus.DISABLED, true);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void delete(long roleId) {
         long tenantId = TenantContextHolder.requireTenantId();
+        lockTenantForAdminInvariant(tenantId);
         SystemRole role = requireRole(tenantId, roleId);
         assertNotProtected(role);
         if (userRoleMapper.countByRole(tenantId, roleId) > 0) {
@@ -139,6 +137,7 @@ public class RoleServiceImpl implements RoleService {
     @Transactional(rollbackFor = Exception.class)
     public void assignMenus(long roleId, Set<Long> menuIds) {
         long tenantId = TenantContextHolder.requireTenantId();
+        lockTenantForAdminInvariant(tenantId);
         SystemRole role = requireRole(tenantId, roleId);
         assertNotProtected(role);
         validateMenuIds(menuIds);
@@ -150,8 +149,12 @@ public class RoleServiceImpl implements RoleService {
         registerRevocationsAfterCommit(tenantId, userIds);
     }
 
-    private void changeStatus(long tenantId, long roleId, RoleStatus status) {
+    private void changeStatus(long tenantId, long roleId, RoleStatus status, boolean protectBuiltInRole) {
+        lockTenantForAdminInvariant(tenantId);
         SystemRole role = requireRole(tenantId, roleId);
+        if (protectBuiltInRole) {
+            assertNotProtected(role);
+        }
         if (role.getStatus() != status) {
             role.setStatus(status);
             roleMapper.updateById(role);
@@ -185,6 +188,10 @@ public class RoleServiceImpl implements RoleService {
 
     private void revokeAffectedUsersAfterCommit(long tenantId, long roleId) {
         registerRevocationsAfterCommit(tenantId, userRoleMapper.selectUserIdsByRole(tenantId, roleId));
+    }
+
+    private void lockTenantForAdminInvariant(long tenantId) {
+        tenantMapper.lockByIdForAdminInvariant(tenantId);
     }
 
     private void registerRevocationsAfterCommit(long tenantId, List<Long> userIds) {
