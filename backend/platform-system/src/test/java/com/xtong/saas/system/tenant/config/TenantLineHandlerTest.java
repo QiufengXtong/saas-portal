@@ -19,6 +19,7 @@ class TenantLineHandlerTest {
     void shouldIgnoreOnlyGlobalTables() {
         assertThat(handler.ignoreTable("sys_tenant")).isTrue();
         assertThat(handler.ignoreTable("sys_menu")).isTrue();
+        assertThat(handler.ignoreTable("sys_bootstrap_lock")).isTrue();
         assertThat(handler.ignoreTable("flyway_schema_history")).isTrue();
         assertThat(handler.ignoreTable("sys_user")).isFalse();
         assertThat(handler.ignoreTable("sys_role")).isFalse();

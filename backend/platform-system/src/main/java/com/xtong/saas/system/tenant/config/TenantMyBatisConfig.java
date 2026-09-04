@@ -19,6 +19,7 @@ public class TenantMyBatisConfig {
     private static final Set<String> GLOBAL_TABLES = Set.of(
             "sys_tenant",
             "sys_menu",
+            "sys_bootstrap_lock",
             "flyway_schema_history"
     );
 

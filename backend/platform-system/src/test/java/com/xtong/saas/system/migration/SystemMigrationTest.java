@@ -11,6 +11,11 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -48,18 +53,45 @@ class SystemMigrationTest {
                 .locations("classpath:db/migration")
                 .load();
 
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(2);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(3);
 
         try (Connection connection = dataSource.getConnection()) {
             assertThat(queryForInt(connection,
                     "select count(*) from information_schema.tables "
                             + "where table_schema = 'public' and table_name like 'sys_%'"))
-                    .isEqualTo(6);
+                    .isEqualTo(7);
             assertThat(queryForStrings(connection,
                     "select permission_code from sys_menu where permission_code is not null"))
                     .containsExactlyInAnyOrderElementsOf(EXPECTED_PERMISSIONS);
             assertThat(queryForInt(connection, "select count(*) from sys_tenant")).isZero();
             assertThat(queryForInt(connection, "select count(*) from sys_user")).isZero();
+        }
+    }
+
+    @Test
+    void shouldSerializeBootstrapAcrossDatabaseTransactions() throws Exception {
+        DataSource dataSource = migrationDataSource("bootstrap_lock");
+        Flyway.configure().dataSource(dataSource).locations("classpath:db/migration").load().migrate();
+
+        try (Connection first = dataSource.getConnection();
+             Connection second = dataSource.getConnection();
+             ExecutorService executor = Executors.newSingleThreadExecutor()) {
+            first.setAutoCommit(false);
+            second.setAutoCommit(false);
+            assertThat(queryForInt(first, "select id from sys_bootstrap_lock where id = 1 for update"))
+                    .isEqualTo(1);
+            CountDownLatch attempting = new CountDownLatch(1);
+            Future<Integer> secondLock = executor.submit(() -> {
+                attempting.countDown();
+                return queryForInt(second, "select id from sys_bootstrap_lock where id = 1 for update");
+            });
+
+            assertThat(attempting.await(1, TimeUnit.SECONDS)).isTrue();
+            Thread.sleep(100L);
+            assertThat(secondLock.isDone()).isFalse();
+            first.commit();
+            assertThat(secondLock.get(1, TimeUnit.SECONDS)).isEqualTo(1);
+            second.commit();
         }
     }
 

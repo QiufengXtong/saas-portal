@@ -1,6 +1,7 @@
 package com.xtong.saas.system.auth.service;
 
 import com.xtong.saas.common.exception.BusinessException;
+import com.xtong.saas.common.exception.CommonErrorCode;
 import com.xtong.saas.system.auth.config.AuthProperties;
 import com.xtong.saas.system.auth.dto.LoginRequest;
 import com.xtong.saas.system.auth.dto.RefreshTokenRequest;
@@ -25,8 +26,6 @@ import com.xtong.saas.system.user.entity.SystemUser;
 import com.xtong.saas.system.user.enums.UserStatus;
 import com.xtong.saas.system.user.exception.UserErrorCode;
 import com.xtong.saas.system.user.service.UserService;
-import jakarta.validation.Validation;
-import jakarta.validation.ValidatorFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -46,6 +45,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -121,8 +121,8 @@ class AuthServiceTest {
 
         assertThat(response).isEqualTo(new TokenResponse("access-1", "refresh-1", "Bearer", 900L));
         InOrder order = inOrder(tenantService, loginFailureService, userService, passwordEncoder, permissionService);
-        order.verify(tenantService).requireEnabledByCode("default");
         order.verify(loginFailureService).assertAllowed("default", "admin");
+        order.verify(tenantService).requireEnabledByCode("default");
         order.verify(userService).requireEnabledForLogin(11L, "admin");
         order.verify(passwordEncoder).matches(" Secret123 ", "encoded");
         order.verify(permissionService).loadUserPermissions(11L, 22L);
@@ -154,29 +154,77 @@ class AuthServiceTest {
     }
 
     @Test
+    void shouldStopAfterThreeSessionCredentialCollisions() {
+        stubSuccessfulIdentity();
+        when(sessionIdGenerator.generate()).thenReturn("session-1", "session-2", "session-3");
+        when(refreshTokenGenerator.generate()).thenReturn("refresh-1", "refresh-2", "refresh-3");
+        when(tokenHashService.hash("refresh-1")).thenReturn("hash-1");
+        when(tokenHashService.hash("refresh-2")).thenReturn("hash-2");
+        when(tokenHashService.hash("refresh-3")).thenReturn("hash-3");
+        when(sessionStore.create(any(AuthSession.class), any(), eq(REFRESH_TTL))).thenReturn(false);
+
+        assertThatThrownBy(() -> authService.login(new LoginRequest("default", "admin", "Secret123")))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(CommonErrorCode.INTERNAL_ERROR);
+        verify(sessionStore, times(3)).create(any(AuthSession.class), any(), eq(REFRESH_TTL));
+        verifyNoInteractions(accessTokenService);
+    }
+
+    @Test
     void shouldHideUnknownUserBehindInvalidCredentialsAndRecordFailure() {
         when(tenantService.requireEnabledByCode("default")).thenReturn(enabledTenant(11L));
         when(userService.requireEnabledForLogin(11L, "missing"))
                 .thenThrow(new BusinessException(UserErrorCode.USER_NOT_FOUND));
+        when(passwordEncoder.matches(eq("Secret123"), any())).thenReturn(false);
 
         assertThatThrownBy(() -> authService.login(new LoginRequest("default", "missing", "Secret123")))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
                 .isEqualTo(AuthErrorCode.INVALID_CREDENTIALS);
         verify(loginFailureService).recordFailure("default", "missing");
-        verifyNoInteractions(passwordEncoder, permissionService, sessionStore);
+        verify(passwordEncoder).matches(eq("Secret123"), any());
+        verifyNoInteractions(permissionService, sessionStore);
     }
 
     @Test
     void shouldHideUnknownTenantBehindInvalidCredentials() {
         when(tenantService.requireEnabledByCode("missing"))
                 .thenThrow(new BusinessException(TenantErrorCode.TENANT_NOT_FOUND));
+        when(passwordEncoder.matches(eq("Secret123"), any())).thenReturn(false);
 
         assertThatThrownBy(() -> authService.login(new LoginRequest("missing", "admin", "Secret123")))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
                 .isEqualTo(AuthErrorCode.INVALID_CREDENTIALS);
-        verifyNoInteractions(loginFailureService, userService, passwordEncoder, permissionService, sessionStore);
+        InOrder order = inOrder(loginFailureService, tenantService, passwordEncoder);
+        order.verify(loginFailureService).assertAllowed("missing", "admin");
+        order.verify(tenantService).requireEnabledByCode("missing");
+        order.verify(passwordEncoder).matches(eq("Secret123"), any());
+        verify(loginFailureService).recordFailure("missing", "admin");
+        verifyNoInteractions(userService, permissionService, sessionStore);
+    }
+
+    @Test
+    void shouldAccumulateUnknownTenantFailureAndLockBeforeSecondLookup() {
+        when(tenantService.requireEnabledByCode("missing"))
+                .thenThrow(new BusinessException(TenantErrorCode.TENANT_NOT_FOUND));
+        when(passwordEncoder.matches(eq("Secret123"), any())).thenReturn(false);
+        org.mockito.Mockito.doNothing()
+                .doThrow(new BusinessException(AuthErrorCode.LOGIN_LOCKED))
+                .when(loginFailureService).assertAllowed("missing", "admin");
+
+        assertThatThrownBy(() -> authService.login(new LoginRequest(" Missing ", " ADMIN ", "Secret123")))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(AuthErrorCode.INVALID_CREDENTIALS);
+        assertThatThrownBy(() -> authService.login(new LoginRequest("missing", "admin", "Secret123")))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(AuthErrorCode.LOGIN_LOCKED);
+        verify(tenantService, times(1)).requireEnabledByCode("missing");
+        verify(loginFailureService, times(1)).recordFailure("missing", "admin");
+        verify(passwordEncoder, times(1)).matches(eq("Secret123"), any());
     }
 
     @Test
@@ -195,15 +243,17 @@ class AuthServiceTest {
     }
 
     @Test
-    void shouldPreserveTenantAndUserStatusFailuresWithoutCountingPasswordFailure() {
+    void shouldHideDisabledTenantAndUserBehindInvalidCredentialsWithDummyPasswordWork() {
         when(tenantService.requireEnabledByCode("disabled"))
                 .thenThrow(new BusinessException(TenantErrorCode.TENANT_DISABLED));
+        when(passwordEncoder.matches(eq("Secret123"), any())).thenReturn(false);
 
         assertThatThrownBy(() -> authService.login(new LoginRequest("disabled", "admin", "Secret123")))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
-                .isEqualTo(TenantErrorCode.TENANT_DISABLED);
-        verifyNoInteractions(loginFailureService, userService, passwordEncoder);
+                .isEqualTo(AuthErrorCode.INVALID_CREDENTIALS);
+        verify(loginFailureService).recordFailure("disabled", "admin");
+        verify(passwordEncoder).matches(eq("Secret123"), any());
 
         when(tenantService.requireEnabledByCode("default")).thenReturn(enabledTenant(11L));
         when(userService.requireEnabledForLogin(11L, "disabled"))
@@ -212,13 +262,13 @@ class AuthServiceTest {
         assertThatThrownBy(() -> authService.login(new LoginRequest("default", "disabled", "Secret123")))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
-                .isEqualTo(UserErrorCode.USER_DISABLED);
-        verify(loginFailureService, never()).recordFailure("default", "disabled");
+                .isEqualTo(AuthErrorCode.INVALID_CREDENTIALS);
+        verify(loginFailureService).recordFailure("default", "disabled");
+        verify(passwordEncoder, times(2)).matches(eq("Secret123"), any());
     }
 
     @Test
     void shouldStopLockedLoginBeforeLookingUpUser() {
-        when(tenantService.requireEnabledByCode("default")).thenReturn(enabledTenant(11L));
         org.mockito.Mockito.doThrow(new BusinessException(AuthErrorCode.LOGIN_LOCKED))
                 .when(loginFailureService).assertAllowed("default", "admin");
 
@@ -226,7 +276,7 @@ class AuthServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
                 .isEqualTo(AuthErrorCode.LOGIN_LOCKED);
-        verifyNoInteractions(userService, passwordEncoder, permissionService, sessionStore);
+        verifyNoInteractions(tenantService, userService, passwordEncoder, permissionService, sessionStore);
     }
 
     @Test
@@ -296,14 +346,27 @@ class AuthServiceTest {
     }
 
     @Test
-    void shouldRejectLoginPasswordBeyondBcryptUtf8Limit() {
+    void shouldRejectLoginPasswordBeyondBcryptUtf8LimitAtServiceBoundary() {
         LoginRequest request = new LoginRequest("default", "admin", "密".repeat(25));
 
-        try (ValidatorFactory factory = Validation.buildDefaultValidatorFactory()) {
-            assertThat(factory.getValidator().validate(request))
-                    .extracting(violation -> violation.getPropertyPath().toString())
-                    .contains("passwordWithinUtf8Limit");
-        }
+        assertThatThrownBy(() -> authService.login(request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(AuthErrorCode.INVALID_CREDENTIALS);
+        verify(loginFailureService).assertAllowed("default", "admin");
+        verify(loginFailureService).recordFailure("default", "admin");
+        verifyNoInteractions(tenantService, passwordEncoder, userService, permissionService, sessionStore);
+    }
+
+    @Test
+    void shouldRejectEmptyLoginPasswordAtServiceBoundary() {
+        assertThatThrownBy(() -> authService.login(new LoginRequest("default", "admin", "")))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(AuthErrorCode.INVALID_CREDENTIALS);
+        verify(loginFailureService).assertAllowed("default", "admin");
+        verify(loginFailureService).recordFailure("default", "admin");
+        verifyNoInteractions(tenantService, passwordEncoder, userService, permissionService, sessionStore);
     }
 
     private void stubSuccessfulIdentity() {

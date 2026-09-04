@@ -2,6 +2,7 @@ package com.xtong.saas.system.bootstrap;
 
 import com.xtong.saas.system.bootstrap.config.BootstrapProperties;
 import com.xtong.saas.system.bootstrap.exception.BootstrapConfigurationException;
+import com.xtong.saas.system.bootstrap.mapper.SystemBootstrapLockMapper;
 import com.xtong.saas.system.role.entity.SystemRole;
 import com.xtong.saas.system.role.entity.SystemUserRole;
 import com.xtong.saas.system.role.enums.RoleStatus;
@@ -18,6 +19,7 @@ import com.xtong.saas.system.user.mapper.SystemUserMapper;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,10 +35,10 @@ import java.util.Locale;
 @ConditionalOnBean(BootstrapProperties.class)
 public class SystemBootstrapInitializer implements ApplicationRunner {
 
-    private static final Object BOOTSTRAP_MONITOR = new Object();
     private static final String TENANT_ADMIN_ROLE_CODE = "TENANT_ADMIN";
 
     private final BootstrapProperties properties;
+    private final SystemBootstrapLockMapper bootstrapLockMapper;
     private final TenantService tenantService;
     private final SystemTenantMapper tenantMapper;
     private final SystemRoleMapper roleMapper;
@@ -46,6 +48,7 @@ public class SystemBootstrapInitializer implements ApplicationRunner {
 
     public SystemBootstrapInitializer(
             BootstrapProperties properties,
+            SystemBootstrapLockMapper bootstrapLockMapper,
             TenantService tenantService,
             SystemTenantMapper tenantMapper,
             SystemRoleMapper roleMapper,
@@ -53,6 +56,7 @@ public class SystemBootstrapInitializer implements ApplicationRunner {
             SystemUserRoleMapper userRoleMapper,
             PasswordEncoder passwordEncoder) {
         this.properties = properties;
+        this.bootstrapLockMapper = bootstrapLockMapper;
         this.tenantService = tenantService;
         this.tenantMapper = tenantMapper;
         this.roleMapper = roleMapper;
@@ -75,13 +79,12 @@ public class SystemBootstrapInitializer implements ApplicationRunner {
     }
 
     private void initializeIfNecessary() {
-        synchronized (BOOTSTRAP_MONITOR) {
-            if (tenantService.hasAnyTenant()) {
-                return;
-            }
-            ValidBootstrapConfiguration configuration = validateConfiguration();
-            createInitialTenant(configuration);
+        bootstrapLockMapper.lockInitialization();
+        if (tenantService.hasAnyTenant()) {
+            return;
         }
+        ValidBootstrapConfiguration configuration = validateConfiguration();
+        createInitialTenant(configuration);
     }
 
     private void createInitialTenant(ValidBootstrapConfiguration configuration) {
@@ -89,7 +92,14 @@ public class SystemBootstrapInitializer implements ApplicationRunner {
         tenant.setTenantCode(configuration.tenantCode());
         tenant.setTenantName(configuration.tenantName());
         tenant.setStatus(TenantStatus.ENABLED);
-        tenantMapper.insert(tenant);
+        try {
+            tenantMapper.insert(tenant);
+        } catch (DuplicateKeyException exception) {
+            if (tenantService.hasAnyTenant()) {
+                return;
+            }
+            throw exception;
+        }
         requireAssignedId(tenant.getId(), "tenant");
         tenantMapper.lockByIdForAdminInvariant(tenant.getId());
 

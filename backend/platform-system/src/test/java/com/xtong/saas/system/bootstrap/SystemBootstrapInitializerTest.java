@@ -2,6 +2,7 @@ package com.xtong.saas.system.bootstrap;
 
 import com.xtong.saas.system.bootstrap.config.BootstrapProperties;
 import com.xtong.saas.system.bootstrap.exception.BootstrapConfigurationException;
+import com.xtong.saas.system.bootstrap.mapper.SystemBootstrapLockMapper;
 import com.xtong.saas.system.role.entity.SystemRole;
 import com.xtong.saas.system.role.entity.SystemUserRole;
 import com.xtong.saas.system.role.enums.RoleStatus;
@@ -25,6 +26,7 @@ import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.nio.charset.StandardCharsets;
 import java.util.stream.Stream;
@@ -46,6 +48,8 @@ class SystemBootstrapInitializerTest {
 
     @Mock
     private TenantService tenantService;
+    @Mock
+    private SystemBootstrapLockMapper bootstrapLockMapper;
     @Mock
     private SystemTenantMapper tenantMapper;
     @Mock
@@ -112,13 +116,15 @@ class SystemBootstrapInitializerTest {
         assertThat(relationCaptor.getValue().getRoleId()).isEqualTo(202L);
         assertThat(TenantContextHolder.currentTenantId()).isEmpty();
 
-        InOrder order = inOrder(tenantService, tenantMapper, roleMapper, userMapper, userRoleMapper);
+        InOrder order = inOrder(bootstrapLockMapper, tenantService, tenantMapper, roleMapper, userMapper, userRoleMapper);
+        order.verify(bootstrapLockMapper).lockInitialization();
         order.verify(tenantService).hasAnyTenant();
         order.verify(tenantMapper).insert(any(SystemTenant.class));
         order.verify(tenantMapper).lockByIdForAdminInvariant(101L);
         order.verify(roleMapper).insert(any(SystemRole.class));
         order.verify(userMapper).insert(any(SystemUser.class));
         order.verify(userRoleMapper).insert(any(SystemUserRole.class));
+        order.verify(bootstrapLockMapper).lockInitialization();
         order.verify(tenantService).hasAnyTenant();
     }
 
@@ -129,7 +135,23 @@ class SystemBootstrapInitializerTest {
 
         initializer.run();
 
+        verify(bootstrapLockMapper).lockInitialization();
         verifyNoInteractions(tenantMapper, roleMapper, userMapper, userRoleMapper, passwordEncoder);
+    }
+
+    @Test
+    void shouldTreatConcurrentTenantUniqueKeyWinnerAsIdempotentCompletion() {
+        SystemBootstrapInitializer initializer = initializer(new BootstrapProperties(
+                "default", "Default Tenant", "admin", "Secret123"));
+        when(tenantService.hasAnyTenant()).thenReturn(false, true);
+        org.mockito.Mockito.doThrow(new DuplicateKeyException("concurrent tenant winner"))
+                .when(tenantMapper).insert(any(SystemTenant.class));
+
+        initializer.run();
+
+        verify(bootstrapLockMapper).lockInitialization();
+        verify(tenantService, times(2)).hasAnyTenant();
+        verifyNoInteractions(roleMapper, userMapper, userRoleMapper, passwordEncoder);
     }
 
     @ParameterizedTest(name = "missing {1}")
@@ -143,6 +165,7 @@ class SystemBootstrapInitializerTest {
                 .isInstanceOf(BootstrapConfigurationException.class)
                 .hasMessageContaining(missingProperty)
                 .hasMessageNotContaining("NeverExposeThisPassword");
+        verify(bootstrapLockMapper).lockInitialization();
         verifyNoInteractions(tenantMapper, roleMapper, userMapper, userRoleMapper, passwordEncoder);
     }
 
@@ -158,12 +181,14 @@ class SystemBootstrapInitializerTest {
                 .isInstanceOf(BootstrapConfigurationException.class)
                 .hasMessageContaining("saas.bootstrap.admin-password")
                 .hasMessageNotContaining(oversizedPassword);
+        verify(bootstrapLockMapper).lockInitialization();
         verify(passwordEncoder, never()).encode(oversizedPassword);
     }
 
     private SystemBootstrapInitializer initializer(BootstrapProperties properties) {
         return new SystemBootstrapInitializer(
                 properties,
+                bootstrapLockMapper,
                 tenantService,
                 tenantMapper,
                 roleMapper,

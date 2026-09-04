@@ -1,6 +1,7 @@
 package com.xtong.saas.system.auth.service.impl;
 
 import com.xtong.saas.common.exception.BusinessException;
+import com.xtong.saas.common.exception.CommonErrorCode;
 import com.xtong.saas.system.auth.config.AuthProperties;
 import com.xtong.saas.system.auth.dto.LoginRequest;
 import com.xtong.saas.system.auth.dto.RefreshTokenRequest;
@@ -28,6 +29,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -37,6 +39,9 @@ import java.util.Set;
 public class AuthServiceImpl implements AuthService {
 
     private static final String BEARER_TOKEN_TYPE = "Bearer";
+    private static final int SESSION_CREATION_ATTEMPTS = 3;
+    private static final String DUMMY_PASSWORD_HASH =
+            "$2a$12$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
 
     private final TenantService tenantService;
     private final UserService userService;
@@ -80,12 +85,14 @@ public class AuthServiceImpl implements AuthService {
         Objects.requireNonNull(request, "request must not be null");
         String tenantCode = request.tenantCode();
         String username = request.username();
-        SystemTenant tenant = requireLoginTenant(tenantCode);
         loginFailureService.assertAllowed(tenantCode, username);
-        SystemUser user = requireLoginUser(tenant.getId(), tenantCode, username);
+        if (!isBcryptPasswordLength(request.password())) {
+            throw invalidCredentials(tenantCode, username);
+        }
+        SystemTenant tenant = requireLoginTenant(tenantCode, username, request.password());
+        SystemUser user = requireLoginUser(tenant.getId(), tenantCode, username, request.password());
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
-            loginFailureService.recordFailure(tenantCode, username);
-            throw new BusinessException(AuthErrorCode.INVALID_CREDENTIALS);
+            throw invalidCredentials(tenantCode, username);
         }
         Set<String> permissions = permissionService.loadUserPermissions(tenant.getId(), user.getId());
         CreatedSession created = createUniqueSession(tenant.getId(), user, permissions);
@@ -128,31 +135,35 @@ public class AuthServiceImpl implements AuthService {
                 session.permissions());
     }
 
-    private SystemUser requireLoginUser(long tenantId, String tenantCode, String username) {
+    private SystemUser requireLoginUser(
+            long tenantId, String tenantCode, String username, String password) {
         try {
             return userService.requireEnabledForLogin(tenantId, username);
         } catch (BusinessException exception) {
-            if (exception.getErrorCode() != UserErrorCode.USER_NOT_FOUND) {
+            if (exception.getErrorCode() != UserErrorCode.USER_NOT_FOUND
+                    && exception.getErrorCode() != UserErrorCode.USER_DISABLED) {
                 throw exception;
             }
-            loginFailureService.recordFailure(tenantCode, username);
-            throw new BusinessException(AuthErrorCode.INVALID_CREDENTIALS);
+            runDummyPasswordCheck(password);
+            throw invalidCredentials(tenantCode, username);
         }
     }
 
-    private SystemTenant requireLoginTenant(String tenantCode) {
+    private SystemTenant requireLoginTenant(String tenantCode, String username, String password) {
         try {
             return tenantService.requireEnabledByCode(tenantCode);
         } catch (BusinessException exception) {
-            if (exception.getErrorCode() == TenantErrorCode.TENANT_NOT_FOUND) {
-                throw new BusinessException(AuthErrorCode.INVALID_CREDENTIALS);
+            if (exception.getErrorCode() == TenantErrorCode.TENANT_NOT_FOUND
+                    || exception.getErrorCode() == TenantErrorCode.TENANT_DISABLED) {
+                runDummyPasswordCheck(password);
+                throw invalidCredentials(tenantCode, username);
             }
             throw exception;
         }
     }
 
     private CreatedSession createUniqueSession(long tenantId, SystemUser user, Set<String> permissions) {
-        while (true) {
+        for (int attempt = 0; attempt < SESSION_CREATION_ATTEMPTS; attempt++) {
             String sessionId = sessionIdGenerator.generate();
             String refreshToken = refreshTokenGenerator.generate();
             String refreshHash = tokenHashService.hash(refreshToken);
@@ -168,6 +179,22 @@ public class AuthServiceImpl implements AuthService {
                 return new CreatedSession(session, refreshToken);
             }
         }
+        throw new BusinessException(CommonErrorCode.INTERNAL_ERROR);
+    }
+
+    private void runDummyPasswordCheck(String password) {
+        passwordEncoder.matches(password, DUMMY_PASSWORD_HASH);
+    }
+
+    private BusinessException invalidCredentials(String tenantCode, String username) {
+        loginFailureService.recordFailure(tenantCode, username);
+        return new BusinessException(AuthErrorCode.INVALID_CREDENTIALS);
+    }
+
+    private static boolean isBcryptPasswordLength(String password) {
+        return password != null
+                && !password.isEmpty()
+                && password.getBytes(StandardCharsets.UTF_8).length <= 72;
     }
 
     private TokenResponse tokenResponse(String accessToken, String refreshToken) {
