@@ -29,6 +29,11 @@
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-spring-boot4-starter</artifactId>
         </dependency>
+        <!-- MyBatis-Plus 将分页拦截器置于可选 JSqlParser 模块，此处显式启用。 -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-jsqlparser-4.9</artifactId>
+        </dependency>
         <!-- Common 的后续实体和异常处理实现使用 Lombok。 -->
         <dependency>
             <groupId>org.projectlombok</groupId>
