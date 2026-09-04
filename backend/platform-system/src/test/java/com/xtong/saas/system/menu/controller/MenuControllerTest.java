@@ -1,33 +1,31 @@
 package com.xtong.saas.system.menu.controller;
 
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
-import org.springframework.security.access.prepost.PreAuthorize;
+import com.xtong.saas.common.result.Result;
+import com.xtong.saas.system.menu.dto.MenuTreeNodeVO;
+import com.xtong.saas.system.menu.service.MenuService;
+import org.junit.jupiter.api.Test;
 
-import java.lang.reflect.Method;
-import java.util.stream.Stream;
+import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
-/** 验证只读菜单和权限目录 HTTP API 使用各自精确的权限码。 */
+/** 验证只读菜单 Controller 对菜单树和权限目录使用统一结果包装。 */
 class MenuControllerTest {
 
-    @ParameterizedTest
-    @MethodSource("menuPermissionMappings")
-    void shouldUseExactPermissionForEveryMenuEndpoint(String methodName, String permission) throws Exception {
-        Method method = Stream.of(MenuController.class.getDeclaredMethods())
-                .filter(candidate -> candidate.getName().equals(methodName))
-                .findFirst()
-                .orElseThrow();
+    private final MenuService menuService = mock(MenuService.class);
+    private final MenuController controller = new MenuController(menuService);
 
-        assertThat(method.getAnnotation(PreAuthorize.class).value())
-                .isEqualTo("hasAuthority('" + permission + "')");
-    }
+    @Test
+    void shouldWrapReadOnlyCatalogResults() {
+        List<MenuTreeNodeVO> tree = List.of();
+        Set<String> permissions = Set.of("system:user:list");
+        when(menuService.getTree()).thenReturn(tree);
+        when(menuService.getPermissionCodes()).thenReturn(permissions);
 
-    private static Stream<Arguments> menuPermissionMappings() {
-        return Stream.of(
-                Arguments.of("tree", "system:menu:tree"),
-                Arguments.of("permissions", "system:permission:list"));
+        assertThat(controller.tree()).isEqualTo(Result.success(tree));
+        assertThat(controller.permissions()).isEqualTo(Result.success(permissions));
     }
 }

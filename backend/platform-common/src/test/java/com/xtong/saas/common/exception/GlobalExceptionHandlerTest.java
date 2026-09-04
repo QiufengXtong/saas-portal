@@ -13,6 +13,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
@@ -95,6 +96,18 @@ class GlobalExceptionHandlerTest {
         assertEquals(1002, response.getBody().code());
         assertEquals("请求内容格式错误", response.getBody().message());
         assertFalse(response.getBody().message().contains("Secret123"));
+    }
+
+    @Test
+    void shouldMapPathVariableTypeMismatchToInvalidParameter() throws NoSuchMethodException {
+        var exception = new MethodArgumentTypeMismatchException(
+                "not-a-number", Long.class, "id", methodParameter(), new NumberFormatException());
+
+        var response = handler.handleMethodArgumentTypeMismatchException(exception);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals(1001, response.getBody().code());
+        assertEquals("参数不合法", response.getBody().message());
     }
 
     @Test

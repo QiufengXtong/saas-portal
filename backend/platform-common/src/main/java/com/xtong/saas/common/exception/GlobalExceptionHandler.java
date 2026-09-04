@@ -10,6 +10,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.util.Comparator;
 
@@ -78,6 +79,18 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Result<Void>> handleHttpMessageNotReadableException(
             HttpMessageNotReadableException exception) {
         return failure(CommonErrorCode.MALFORMED_REQUEST);
+    }
+
+    /**
+     * 将路径变量或查询参数类型转换失败映射为统一参数错误，避免误报服务端故障。
+     *
+     * @param exception 参数类型转换异常
+     * @return 固定参数错误响应
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<Result<Void>> handleMethodArgumentTypeMismatchException(
+            MethodArgumentTypeMismatchException exception) {
+        return failure(CommonErrorCode.INVALID_PARAMETER);
     }
 
     /**
