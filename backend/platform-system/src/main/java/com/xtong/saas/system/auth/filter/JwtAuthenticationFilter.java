@@ -16,6 +16,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -73,7 +74,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         AuthenticatedUser tokenClaims;
         try {
             tokenClaims = accessTokenService.parse(token);
-        } catch (RuntimeException exception) {
+        } catch (JwtException exception) {
             unauthorized(request, response);
             return;
         }

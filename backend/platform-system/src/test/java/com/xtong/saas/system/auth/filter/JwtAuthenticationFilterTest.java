@@ -13,6 +13,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.BadJwtException;
 import tools.jackson.databind.ObjectMapper;
@@ -21,6 +22,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -113,6 +115,29 @@ class JwtAuthenticationFilterTest {
 
         assertThat(response.getStatus()).isEqualTo(401);
         assertThat(response.getContentAsString()).contains("\"code\":1101");
+    }
+
+    @Test
+    void shouldPropagateUnexpectedTokenServiceFailureAndStillClearContexts() {
+        IllegalStateException failure = new IllegalStateException("token service unavailable");
+        when(accessTokenService.parse("runtime-failure")).thenThrow(failure);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        SecurityContextHolder.getContext().setAuthentication(mock(Authentication.class));
+
+        TenantScope.run(99L, () -> {
+            assertThatThrownBy(() -> filter.doFilter(
+                    requestWithAuthorization("Bearer runtime-failure"),
+                    response,
+                    (servletRequest, servletResponse) -> {
+                        throw new AssertionError("token service failure must not reach the filter chain");
+                    }))
+                    .isSameAs(failure);
+            assertThat(TenantContextHolder.currentTenantId()).isEmpty();
+            assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+        });
+
+        assertThat(response.getStatus()).isEqualTo(200);
+        assertThat(response.getContentAsByteArray()).isEmpty();
     }
 
     @Test
