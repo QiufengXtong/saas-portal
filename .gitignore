@@ -22,6 +22,9 @@ dist/
 .vscode/
 *.iml
 
+# Isolated Git worktrees
+.worktrees/
+
 # Operating system
 .DS_Store
 Thumbs.db
