@@ -7,6 +7,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 
@@ -54,12 +55,16 @@ public class RedisLoginFailureService implements LoginFailureService {
 
     @Override
     public void recordFailure(String tenantCode, String username) {
+        String failureWindowMillis = ttlMillis(
+                properties.loginFailureWindow(), "loginFailureWindow");
+        String lockDurationMillis = ttlMillis(
+                properties.loginLockDuration(), "loginLockDuration");
         Long failureCount = redisTemplate.execute(
                 RECORD_FAILURE_SCRIPT,
                 List.of(key(tenantCode, username)),
-                Long.toString(properties.loginFailureWindow().toMillis()),
+                failureWindowMillis,
                 Integer.toString(properties.loginFailureLimit()),
-                Long.toString(properties.loginLockDuration().toMillis()));
+                lockDurationMillis);
         if (failureCount == null) {
             throw new IllegalStateException("Login failure count could not be updated");
         }
@@ -81,6 +86,22 @@ public class RedisLoginFailureService implements LoginFailureService {
 
     private static String component(String value) {
         return value.length() + ":" + value;
+    }
+
+    private static String ttlMillis(Duration ttl, String propertyName) {
+        if (ttl == null) {
+            throw new IllegalArgumentException(propertyName + " must be at least 1 millisecond");
+        }
+        long milliseconds;
+        try {
+            milliseconds = ttl.toMillis();
+        } catch (ArithmeticException exception) {
+            throw new IllegalArgumentException(propertyName + " must fit in milliseconds", exception);
+        }
+        if (milliseconds < 1L) {
+            throw new IllegalArgumentException(propertyName + " must be at least 1 millisecond");
+        }
+        return Long.toString(milliseconds);
     }
 
     private static String normalize(String value) {

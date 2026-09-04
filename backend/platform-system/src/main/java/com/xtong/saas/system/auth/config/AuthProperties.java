@@ -27,10 +27,10 @@ public record AuthProperties(
                 || jwtSecret.getBytes(StandardCharsets.UTF_8).length < 32) {
             throw new IllegalArgumentException("jwtSecret must contain at least 32 UTF-8 bytes");
         }
-        requirePositive(accessTokenTtl, "accessTokenTtl");
-        requirePositive(refreshTokenTtl, "refreshTokenTtl");
-        requirePositive(loginFailureWindow, "loginFailureWindow");
-        requirePositive(loginLockDuration, "loginLockDuration");
+        requireAtLeastOneMillisecond(accessTokenTtl, "accessTokenTtl");
+        requireAtLeastOneMillisecond(refreshTokenTtl, "refreshTokenTtl");
+        requireAtLeastOneMillisecond(loginFailureWindow, "loginFailureWindow");
+        requireAtLeastOneMillisecond(loginLockDuration, "loginLockDuration");
         if (accessTokenTtl.compareTo(refreshTokenTtl) >= 0) {
             throw new IllegalArgumentException("accessTokenTtl must be shorter than refreshTokenTtl");
         }
@@ -39,9 +39,16 @@ public record AuthProperties(
         }
     }
 
-    private static void requirePositive(Duration duration, String propertyName) {
-        if (duration == null || duration.isZero() || duration.isNegative()) {
-            throw new IllegalArgumentException(propertyName + " must be positive");
+    private static void requireAtLeastOneMillisecond(Duration duration, String propertyName) {
+        if (duration == null) {
+            throw new IllegalArgumentException(propertyName + " must be at least 1 millisecond");
+        }
+        try {
+            if (duration.toMillis() < 1L) {
+                throw new IllegalArgumentException(propertyName + " must be at least 1 millisecond");
+            }
+        } catch (ArithmeticException exception) {
+            throw new IllegalArgumentException(propertyName + " must fit in milliseconds", exception);
         }
     }
 }

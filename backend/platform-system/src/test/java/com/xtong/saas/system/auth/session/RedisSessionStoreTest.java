@@ -26,6 +26,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
@@ -35,6 +36,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /** 验证 Redis Lua 会话键、TTL、序列化、令牌原子轮换和多设备撤销协议。 */
@@ -128,6 +130,24 @@ class RedisSessionStoreTest {
         assertThat(scripts.getAllValues())
                 .allSatisfy(script -> assertThat(script.getScriptAsString()).contains("EXISTS", "'NX'"));
         verify(redisTemplate, never()).delete(any(String.class));
+    }
+
+    @Test
+    void shouldRejectSubMillisecondSessionTtlBeforeAnyRedisCommand() {
+        assertThatThrownBy(() -> store.create(
+                session("s1", 1L, 2L, "refresh-hash"),
+                "refresh-hash",
+                Duration.ofNanos(1)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("millisecond");
+
+        assertThatThrownBy(() -> store.rotateRefreshToken(
+                "old-hash",
+                "new-hash",
+                Duration.ofNanos(1)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("millisecond");
+        verifyNoInteractions(redisTemplate);
     }
 
     @Test

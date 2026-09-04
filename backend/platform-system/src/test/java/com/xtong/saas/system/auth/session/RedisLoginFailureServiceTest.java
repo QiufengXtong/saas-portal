@@ -23,6 +23,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -102,6 +103,30 @@ class RedisLoginFailureServiceTest {
         assertThatThrownBy(() -> service.recordFailure("default", "admin"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("count");
+    }
+
+    @Test
+    void shouldRejectSubMillisecondFailureTtlsBeforeCallingLua() {
+        AuthProperties subMillisecondWindow = mock(AuthProperties.class);
+        when(subMillisecondWindow.loginFailureWindow()).thenReturn(Duration.ofNanos(1));
+        RedisLoginFailureService windowService =
+                new RedisLoginFailureService(redisTemplate, subMillisecondWindow);
+
+        assertThatThrownBy(() -> windowService.recordFailure("default", "admin"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("loginFailureWindow");
+
+        AuthProperties subMillisecondLock = mock(AuthProperties.class);
+        when(subMillisecondLock.loginFailureWindow()).thenReturn(FAILURE_WINDOW);
+        when(subMillisecondLock.loginLockDuration()).thenReturn(Duration.ofNanos(1));
+        RedisLoginFailureService lockService =
+                new RedisLoginFailureService(redisTemplate, subMillisecondLock);
+
+        assertThatThrownBy(() -> lockService.recordFailure("default", "admin"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("loginLockDuration");
+        verify(redisTemplate, never())
+                .execute(any(RedisScript.class), anyList(), any(Object[].class));
     }
 
     @Test

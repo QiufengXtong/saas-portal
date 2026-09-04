@@ -223,10 +223,16 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
 
     private static String ttlMillis(Duration ttl) {
         Objects.requireNonNull(ttl, "ttl must not be null");
-        if (ttl.isZero() || ttl.isNegative()) {
-            throw new IllegalArgumentException("ttl must be positive");
+        long milliseconds;
+        try {
+            milliseconds = ttl.toMillis();
+        } catch (ArithmeticException exception) {
+            throw new IllegalArgumentException("ttl must fit in milliseconds", exception);
         }
-        return Long.toString(ttl.toMillis());
+        if (milliseconds < 1L) {
+            throw new IllegalArgumentException("ttl must be at least 1 millisecond");
+        }
+        return Long.toString(milliseconds);
     }
 
     private static String sessionKey(String sessionId) {

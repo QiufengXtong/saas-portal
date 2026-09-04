@@ -1,3 +1,5 @@
+<!-- 文件作用：说明 saas-portal 的工程结构、本地开发、部署方式与当前运行限制。 -->
+
 # saas-portal
 
 `saas-portal` 是一个前后端分离的 SaaS 平台基础骨架。当前阶段只提供可启动的工程结构、基础配置和健康状态页面，不包含认证、权限、菜单或业务
@@ -106,6 +108,8 @@ docker compose up --build
 ```
 
 后端会等待 MySQL 和 Redis 健康后启动，前端会等待后端健康后启动。数据分别持久化到 `mysql/data` 和 `redis/data`，这些运行目录不会提交到版本库。
+
+当前认证会话的 Lua 脚本按项目现有 Compose 与应用配置仅支持单节点 Redis，不支持 Redis Cluster；切换到 Cluster 前需要重新设计跨 Key 的 hash slot 方案。
 
 ## 健康检查
 

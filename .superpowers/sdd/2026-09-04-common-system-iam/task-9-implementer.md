@@ -75,3 +75,13 @@
 - 聚焦：`-Dtest=JwtAccessTokenServiceTest,RedisSessionStoreTest,RedisLoginFailureServiceTest -Dsurefire.failIfNoSpecifiedTests=false`，27/27 通过。
 - System：Common 16/16、System 81/81 通过，`BUILD SUCCESS`。
 - 后端全 reactor：Common 16/16、System 81/81、Boot 1/1 通过，Business 无测试，`BUILD SUCCESS`。
+
+## 毫秒 TTL 边界复审追加记录
+
+- `AuthProperties` 的 Access、Refresh、登录失败窗口和锁定期在构造/绑定边界统一要求 `Duration.toMillis() >= 1`，并拒绝无法安全转换为毫秒的溢出值；原有 `15m`/`7d` 默认值与跨字段顺序校验保持不变。
+- `RedisSessionStore` 在 create/rotate 执行 Lua 前重新校验 Session TTL，`RedisLoginFailureService` 在组装 KEYS/ARGV 前重新校验窗口和锁定 TTL；因此亚毫秒 Duration 不会被截断为 `0` 后传给 `PEXPIRE`。
+- RED：新增 1ns 测试后，配置构造未抛异常、Session 创建向 Mock Redis 发送了 `0`、登录失败路径执行 Lua 后才以空结果失败，共 3 条测试按预期失败。
+- GREEN：按毫秒下限实现构造与命令边界校验后，聚焦测试 30/30 通过。
+- Common+System 全测：Common 16/16、System 84/84 通过，`BUILD SUCCESS`。
+- 后端全 reactor：Common 16/16、System 84/84、Boot 1/1 通过，Business 无测试，`BUILD SUCCESS`。
+- 当前 `docker-compose.yaml` 与应用配置为单节点 Redis，本期明确不支持 Redis Cluster；没有为跨命名空间 Lua Key 重构 hash slot。此部署限制同时记录在根 README，后续若引入 Cluster，需专项设计 Redis hash tag 与迁移兼容方案。

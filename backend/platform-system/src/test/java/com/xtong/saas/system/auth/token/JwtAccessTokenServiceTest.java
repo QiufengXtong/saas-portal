@@ -150,6 +150,43 @@ class JwtAccessTokenServiceTest {
     }
 
     @Test
+    void shouldRejectEverySubMillisecondAuthDurationAtConstruction() {
+        assertThatThrownBy(() -> properties(Duration.ofNanos(1)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("accessTokenTtl");
+
+        assertThatThrownBy(() -> new AuthProperties(
+                JWT_SECRET,
+                Duration.ofMillis(1),
+                Duration.ofNanos(1),
+                5,
+                Duration.ofMinutes(15),
+                Duration.ofMinutes(15)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("refreshTokenTtl");
+
+        assertThatThrownBy(() -> new AuthProperties(
+                JWT_SECRET,
+                Duration.ofMinutes(15),
+                Duration.ofDays(7),
+                5,
+                Duration.ofNanos(1),
+                Duration.ofMinutes(15)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("loginFailureWindow");
+
+        assertThatThrownBy(() -> new AuthProperties(
+                JWT_SECRET,
+                Duration.ofMinutes(15),
+                Duration.ofDays(7),
+                5,
+                Duration.ofMinutes(15),
+                Duration.ofNanos(1)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("loginLockDuration");
+    }
+
+    @Test
     void shouldBindDesignedAccessAndRefreshTtlDefaults() {
         new ApplicationContextRunner()
                 .withUserConfiguration(PasswordEncoderConfig.class)
