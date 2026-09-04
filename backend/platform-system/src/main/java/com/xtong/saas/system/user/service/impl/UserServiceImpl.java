@@ -10,6 +10,7 @@ import com.xtong.saas.system.role.mapper.SystemRoleMapper;
 import com.xtong.saas.system.role.mapper.SystemUserRoleMapper;
 import com.xtong.saas.system.tenant.context.TenantContextHolder;
 import com.xtong.saas.system.tenant.context.TenantScope;
+import com.xtong.saas.system.tenant.mapper.SystemTenantMapper;
 import com.xtong.saas.system.user.dto.CreateUserDTO;
 import com.xtong.saas.system.user.dto.ResetPasswordDTO;
 import com.xtong.saas.system.user.dto.UpdateUserDTO;
@@ -21,6 +22,7 @@ import com.xtong.saas.system.user.mapper.SystemUserMapper;
 import com.xtong.saas.system.user.service.UserService;
 import com.xtong.saas.system.user.vo.UserVO;
 import org.springframework.stereotype.Service;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -37,6 +39,7 @@ public class UserServiceImpl implements UserService {
     private final SystemUserMapper userMapper;
     private final SystemRoleMapper roleMapper;
     private final SystemUserRoleMapper userRoleMapper;
+    private final SystemTenantMapper tenantMapper;
     private final PasswordEncoder passwordEncoder;
     private final SessionRevocationService sessionRevocationService;
 
@@ -44,11 +47,13 @@ public class UserServiceImpl implements UserService {
             SystemUserMapper userMapper,
             SystemRoleMapper roleMapper,
             SystemUserRoleMapper userRoleMapper,
+            SystemTenantMapper tenantMapper,
             PasswordEncoder passwordEncoder,
             SessionRevocationService sessionRevocationService) {
         this.userMapper = userMapper;
         this.roleMapper = roleMapper;
         this.userRoleMapper = userRoleMapper;
+        this.tenantMapper = tenantMapper;
         this.passwordEncoder = passwordEncoder;
         this.sessionRevocationService = sessionRevocationService;
     }
@@ -76,10 +81,7 @@ public class UserServiceImpl implements UserService {
     @Transactional
     public String create(CreateUserDTO command) {
         long tenantId = TenantContextHolder.requireTenantId();
-        if (userMapper.selectCount(Wrappers.<SystemUser>query()
-                .eq("tenant_id", tenantId)
-                .eq("username", command.username())
-                .eq("deleted", false)) > 0) {
+        if (userMapper.countByTenantAndUsernameIncludingDeleted(tenantId, command.username()) > 0) {
             throw new BusinessException(UserErrorCode.USERNAME_ALREADY_EXISTS);
         }
         validateRoleIds(tenantId, command.roleIds());
@@ -92,7 +94,11 @@ public class UserServiceImpl implements UserService {
         user.setMobile(command.mobile());
         user.setStatus(UserStatus.ENABLED);
         user.setPasswordChangedAt(LocalDateTime.now());
-        userMapper.insert(user);
+        try {
+            userMapper.insert(user);
+        } catch (DuplicateKeyException exception) {
+            throw new BusinessException(UserErrorCode.USERNAME_ALREADY_EXISTS);
+        }
         replaceRoles(tenantId, user.getId(), command.roleIds());
         return user.getId().toString();
     }
@@ -122,6 +128,7 @@ public class UserServiceImpl implements UserService {
             throw new BusinessException(UserErrorCode.CANNOT_OPERATE_CURRENT_USER);
         }
         long tenantId = TenantContextHolder.requireTenantId();
+        lockTenantForAdminInvariant(tenantId);
         SystemUser user = requireUser(tenantId, userId);
         assertNotLastEnabledTenantAdmin(tenantId, user);
         if (user.getStatus() != UserStatus.DISABLED) {
@@ -149,6 +156,7 @@ public class UserServiceImpl implements UserService {
             throw new BusinessException(UserErrorCode.CANNOT_OPERATE_CURRENT_USER);
         }
         long tenantId = TenantContextHolder.requireTenantId();
+        lockTenantForAdminInvariant(tenantId);
         SystemUser user = requireUser(tenantId, userId);
         assertNotLastEnabledTenantAdmin(tenantId, user);
         userMapper.deleteById(userId);
@@ -160,8 +168,10 @@ public class UserServiceImpl implements UserService {
     @Transactional
     public void assignRoles(long userId, Set<Long> roleIds) {
         long tenantId = TenantContextHolder.requireTenantId();
+        lockTenantForAdminInvariant(tenantId);
         validateRoleIds(tenantId, roleIds);
-        requireUser(tenantId, userId);
+        SystemUser user = requireUser(tenantId, userId);
+        assertRoleReplacementPreservesTenantAdmin(tenantId, user, roleIds);
         replaceRoles(tenantId, userId, roleIds);
         revokeAfterCommit(tenantId, userId);
     }
@@ -241,6 +251,21 @@ public class UserServiceImpl implements UserService {
                 && roleMapper.countEnabledTenantAdminUsers(tenantId) <= 1) {
             throw new BusinessException(UserErrorCode.LAST_TENANT_ADMIN);
         }
+    }
+
+    private void assertRoleReplacementPreservesTenantAdmin(long tenantId, SystemUser user, Set<Long> roleIds) {
+        boolean keepsTenantAdminRole = !roleIds.isEmpty()
+                && roleMapper.containsTenantAdminRole(tenantId, roleIds);
+        if (user.getStatus() == UserStatus.ENABLED
+                && roleMapper.existsTenantAdminRole(tenantId, user.getId())
+                && !keepsTenantAdminRole
+                && roleMapper.countEnabledTenantAdminUsers(tenantId) <= 1) {
+            throw new BusinessException(UserErrorCode.LAST_TENANT_ADMIN);
+        }
+    }
+
+    private void lockTenantForAdminInvariant(long tenantId) {
+        tenantMapper.lockByIdForAdminInvariant(tenantId);
     }
 
     private void revokeAfterCommit(long tenantId, long userId) {

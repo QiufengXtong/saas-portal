@@ -7,6 +7,7 @@ import com.xtong.saas.system.role.entity.SystemUserRole;
 import com.xtong.saas.system.role.mapper.SystemRoleMapper;
 import com.xtong.saas.system.role.mapper.SystemUserRoleMapper;
 import com.xtong.saas.system.tenant.context.TenantScope;
+import com.xtong.saas.system.tenant.mapper.SystemTenantMapper;
 import com.xtong.saas.system.user.dto.CreateUserDTO;
 import com.xtong.saas.system.user.dto.ResetPasswordDTO;
 import com.xtong.saas.system.user.dto.UserQueryDTO;
@@ -20,6 +21,7 @@ import jakarta.validation.Validator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -33,6 +35,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -42,10 +46,11 @@ class UserServiceTest {
     private final SystemUserMapper userMapper = mock(SystemUserMapper.class);
     private final SystemRoleMapper roleMapper = mock(SystemRoleMapper.class);
     private final SystemUserRoleMapper userRoleMapper = mock(SystemUserRoleMapper.class);
+    private final SystemTenantMapper tenantMapper = mock(SystemTenantMapper.class);
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
     private final SessionRevocationService sessionRevocationService = mock(SessionRevocationService.class);
     private final UserService service = new UserServiceImpl(
-            userMapper, roleMapper, userRoleMapper, passwordEncoder, sessionRevocationService);
+            userMapper, roleMapper, userRoleMapper, tenantMapper, passwordEncoder, sessionRevocationService);
 
     @AfterEach
     void shouldClearTransactionSynchronization() {
@@ -56,7 +61,7 @@ class UserServiceTest {
 
     @Test
     void shouldRejectDuplicateUsernameInCurrentTenant() {
-        when(userMapper.selectCount(any())).thenReturn(1L);
+        when(userMapper.countByTenantAndUsernameIncludingDeleted(1L, "alice")).thenReturn(1L);
 
         TenantScope.run(1L, () -> assertThatThrownBy(() -> service.create(createCommand(Set.of())))
                 .isInstanceOf(BusinessException.class)
@@ -64,6 +69,28 @@ class UserServiceTest {
                 .isEqualTo(UserErrorCode.USERNAME_ALREADY_EXISTS));
 
         verify(userMapper, never()).insert(any(SystemUser.class));
+    }
+
+    @Test
+    void shouldRejectUsernameReservedByLogicallyDeletedUser() {
+        when(userMapper.countByTenantAndUsernameIncludingDeleted(1L, "alice")).thenReturn(1L);
+
+        TenantScope.run(1L, () -> assertThatThrownBy(() -> service.create(createCommand(Set.of())))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).getErrorCode())
+                .isEqualTo(UserErrorCode.USERNAME_ALREADY_EXISTS));
+    }
+
+    @Test
+    void shouldMapConcurrentDuplicateUsernameInsertToStableErrorCode() {
+        when(userMapper.countByTenantAndUsernameIncludingDeleted(1L, "alice")).thenReturn(0L);
+        when(passwordEncoder.encode("Password123")).thenReturn("bcrypt");
+        doThrow(new DuplicateKeyException("duplicate username")).when(userMapper).insert(any(SystemUser.class));
+
+        TenantScope.run(1L, () -> assertThatThrownBy(() -> service.create(createCommand(Set.of())))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).getErrorCode())
+                .isEqualTo(UserErrorCode.USERNAME_ALREADY_EXISTS));
     }
 
     @Test
@@ -119,9 +146,31 @@ class UserServiceTest {
     }
 
     @Test
+    void shouldRejectRemovingLastTenantAdminRoleUnderTenantLock() {
+        SystemUser user = user(10L, UserStatus.ENABLED);
+        when(roleMapper.countByTenantAndIds(1L, Set.of(8L))).thenReturn(1L);
+        when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
+        when(userMapper.selectOne(any())).thenReturn(user);
+        when(roleMapper.existsTenantAdminRole(1L, 10L)).thenReturn(true);
+        when(roleMapper.containsTenantAdminRole(1L, Set.of(8L))).thenReturn(false);
+        when(roleMapper.countEnabledTenantAdminUsers(1L)).thenReturn(1L);
+
+        TenantScope.run(1L, () -> assertThatThrownBy(() -> service.assignRoles(10L, Set.of(8L)))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).getErrorCode())
+                .isEqualTo(UserErrorCode.LAST_TENANT_ADMIN));
+
+        org.mockito.InOrder order = inOrder(tenantMapper, userMapper);
+        order.verify(tenantMapper).lockByIdForAdminInvariant(1L);
+        order.verify(userMapper).selectOne(any());
+        verify(userRoleMapper, never()).deleteByUser(1L, 10L);
+    }
+
+    @Test
     void shouldRejectDisablingLastEnabledTenantAdministrator() {
         SystemUser user = user(10L, UserStatus.ENABLED);
         when(userMapper.selectOne(any())).thenReturn(user);
+        when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
         when(roleMapper.existsTenantAdminRole(1L, 10L)).thenReturn(true);
         when(roleMapper.countEnabledTenantAdminUsers(1L)).thenReturn(1L);
 
@@ -131,6 +180,35 @@ class UserServiceTest {
                 .isEqualTo(UserErrorCode.LAST_TENANT_ADMIN));
 
         verify(userMapper, never()).updateById(any(SystemUser.class));
+        verify(tenantMapper).lockByIdForAdminInvariant(1L);
+    }
+
+    @Test
+    void shouldLockTenantBeforeDeletingUserToSerializeAdminInvariant() {
+        SystemUser user = user(10L, UserStatus.DISABLED);
+        when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
+        when(userMapper.selectOne(any())).thenReturn(user);
+
+        TenantScope.run(1L, () -> service.delete(10L, 11L));
+
+        org.mockito.InOrder order = inOrder(tenantMapper, userMapper);
+        order.verify(tenantMapper).lockByIdForAdminInvariant(1L);
+        order.verify(userMapper).selectOne(any());
+        verify(userMapper).deleteById(10L);
+    }
+
+    @Test
+    void shouldNotRevokeSessionsWhenDisabledUserTransactionRollsBack() {
+        SystemUser user = user(10L, UserStatus.ENABLED);
+        when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
+        when(userMapper.selectOne(any())).thenReturn(user);
+        when(roleMapper.existsTenantAdminRole(1L, 10L)).thenReturn(false);
+        TransactionSynchronizationManager.initSynchronization();
+
+        TenantScope.run(1L, () -> service.disable(10L, 11L));
+
+        afterRollback();
+        verify(sessionRevocationService, never()).revokeAllUserSessions(1L, 10L);
     }
 
     @Test
@@ -174,6 +252,12 @@ class UserServiceTest {
     private void afterCommit() {
         List<TransactionSynchronization> synchronizations = TransactionSynchronizationManager.getSynchronizations();
         synchronizations.forEach(TransactionSynchronization::afterCommit);
+        TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    private void afterRollback() {
+        TransactionSynchronizationManager.getSynchronizations().forEach(
+                synchronization -> synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
         TransactionSynchronizationManager.clearSynchronization();
     }
 
