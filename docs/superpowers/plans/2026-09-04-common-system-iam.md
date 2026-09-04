@@ -214,7 +214,7 @@ void shouldHideUnexpectedExceptionDetails() {
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-common -am -Dtest=GlobalExceptionHandlerTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-common -am -Dtest=GlobalExceptionHandlerTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，`GlobalExceptionHandler` 不存在。
@@ -292,7 +292,7 @@ void shouldFillCreateAndUpdateAuditFields() {
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-common -am -Dtest=AuditMetaObjectHandlerTest,MyBatisCommonConfigTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-common -am -Dtest=AuditMetaObjectHandlerTest,MyBatisCommonConfigTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，基础实体和配置类不存在。
@@ -433,7 +433,7 @@ void shouldCreateSystemSchemaAndPermissionCatalog() throws Exception {
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=SystemMigrationTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=SystemMigrationTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，迁移脚本不存在。
@@ -545,7 +545,7 @@ void shouldIgnoreOnlyGlobalTables() {
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=TenantScopeTest,TenantLineHandlerTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=TenantScopeTest,TenantLineHandlerTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，上下文和 Handler 不存在。
@@ -650,7 +650,7 @@ void tenantAdminShouldReceiveAllEnabledPermissions() {
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=MenuServiceTest,PermissionServiceTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=MenuServiceTest,PermissionServiceTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，菜单和权限服务不存在。
@@ -721,7 +721,7 @@ public interface SessionRevocationService {
 @Test
 void shouldRejectRoleFromAnotherTenant() {
     when(roleMapper.countByTenantAndIds(1L, Set.of(99L))).thenReturn(0L);
-    assertThatThrownBy(() -> service.assignRoles(10L, Set.of(99L), principal))
+    assertThatThrownBy(() -> service.assignRoles(10L, Set.of(99L)))
             .isInstanceOf(BusinessException.class)
             .extracting("errorCode").isEqualTo(UserErrorCode.INVALID_ROLE_ASSIGNMENT);
 }
@@ -732,7 +732,7 @@ void shouldRejectRoleFromAnotherTenant() {
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=UserServiceTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=UserServiceTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，DTO、Service 和错误码不存在。
@@ -820,7 +820,7 @@ void shouldReplaceMenusAndRevokeAffectedUsersInOneTransaction() {
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=RoleServiceTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=RoleServiceTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，角色服务不存在。
@@ -909,7 +909,7 @@ Redis 测试 Mock `StringRedisTemplate` 和 Value/Set Operations，断言完整 
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=JwtAccessTokenServiceTest,RedisSessionStoreTest,RedisLoginFailureServiceTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=JwtAccessTokenServiceTest,RedisSessionStoreTest,RedisLoginFailureServiceTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，认证基础类型不存在。
@@ -1028,7 +1028,7 @@ void shouldInitializeOnlyWhenNoTenantExists() {
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=AuthServiceTest,SystemBootstrapInitializerTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=AuthServiceTest,SystemBootstrapInitializerTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，认证和初始化用例不存在。
@@ -1101,7 +1101,7 @@ void protectedEndpointWithoutTokenShouldReturnUnified401() throws Exception {
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=JwtAuthenticationFilterTest,AuthControllerTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=JwtAuthenticationFilterTest,AuthControllerTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，Security 配置和 Controller 不存在。
@@ -1203,7 +1203,7 @@ void shouldRejectUserDeleteWithoutDeleteAuthority() throws Exception {
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=UserControllerTest,RoleControllerTest,MenuControllerTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=UserControllerTest,RoleControllerTest,MenuControllerTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，Controller 不存在。
