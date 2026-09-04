@@ -95,35 +95,17 @@ Set-Location frontend
 Copy-Item .env.example .env
 ```
 
-`.env` 包含 MySQL、Redis 和端口配置，不应提交真实密码。模式 1 使用 Compose 服务名 `mysql` 和 `redis`；模式 2
-改为后端容器能够访问的外部主机地址。
+`.env` 包含前后端及基础服务的宿主机端口、MySQL 数据库和密码配置，不应提交真实密码。Redis 当前采用空密码模式。
 
-## Docker Compose 模式
+## Docker Compose 启动
 
-### 模式 1：完整本地环境
-
-启动前端、后端、MySQL、Redis：
-
-```bash
-docker compose --profile local-infra up --build
-```
-
-`.env` 中保持：
-
-```dotenv
-MYSQL_HOST=mysql
-REDIS_HOST=redis
-```
-
-### 模式 2：使用外部 MySQL 和 Redis
-
-将 `.env` 中的 `MYSQL_HOST`、`REDIS_HOST`、端口和凭据改成外部服务配置，然后执行：
+Compose 统一启动前端、后端、MySQL 和 Redis：
 
 ```bash
 docker compose up --build
 ```
 
-该模式只启动前端和后端，不启动本地 MySQL、Redis。
+后端会等待 MySQL 和 Redis 健康后启动，前端会等待后端健康后启动。数据分别持久化到 `mysql/data` 和 `redis/data`，这些运行目录不会提交到版本库。
 
 ## 健康检查
 

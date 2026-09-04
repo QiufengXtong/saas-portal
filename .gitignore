@@ -12,6 +12,11 @@ target/
 node_modules/
 dist/
 
+# Docker runtime data
+/mysql/data/
+/mysql/logs/
+/redis/data/
+
 # IDE
 .idea/
 .vscode/

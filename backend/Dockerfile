@@ -8,7 +8,10 @@ RUN mvn -B -ntp clean package -DskipTests
 
 FROM eclipse-temurin:21-jre
 
-RUN groupadd --system spring \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system spring \
     && useradd --system --gid spring --create-home spring
 
 WORKDIR /app
