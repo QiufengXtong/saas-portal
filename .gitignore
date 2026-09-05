@@ -25,6 +25,9 @@ dist/
 # Isolated Git worktrees
 .worktrees/
 
+# Internal agent execution reports and temporary verification caches
+.superpowers/
+
 # Operating system
 .DS_Store
 Thumbs.db
