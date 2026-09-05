@@ -2,12 +2,13 @@ package com.xtong.saas;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.test.context.ActiveProfiles;
 
-@SpringBootTest(properties = {
-        "spring.datasource.hikari.initialization-fail-timeout=-1",
-        "spring.data.redis.connect-timeout=100ms",
-        "spring.data.redis.timeout=100ms"
-})
+/** 验证应用能够使用隔离的 test 配置装配完整 Spring 上下文。 */
+@SpringBootTest
+@ActiveProfiles("test")
+@Import(BootRedisIsolationConfiguration.class)
 class SaasPortalApplicationTest {
 
     @Test

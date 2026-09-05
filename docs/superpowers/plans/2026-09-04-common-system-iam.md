@@ -47,7 +47,9 @@ backend/
 │   └── bootstrap/...
 ├── platform-system/src/main/resources/db/migration/
 │   ├── V1__init_system_schema.sql
-│   └── V2__init_system_permissions.sql
+│   ├── V2__init_system_permissions.sql
+│   ├── V3__add_bootstrap_lock.sql
+│   └── V4__add_auth_version_and_role_lookup_index.sql
 └── platform-boot/src/test/resources/application-test.yml
 ```
 
@@ -214,7 +216,7 @@ void shouldHideUnexpectedExceptionDetails() {
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-common -am -Dtest=GlobalExceptionHandlerTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-common -am -Dtest=GlobalExceptionHandlerTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，`GlobalExceptionHandler` 不存在。
@@ -292,7 +294,7 @@ void shouldFillCreateAndUpdateAuditFields() {
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-common -am -Dtest=AuditMetaObjectHandlerTest,MyBatisCommonConfigTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-common -am -Dtest=AuditMetaObjectHandlerTest,MyBatisCommonConfigTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，基础实体和配置类不存在。
@@ -362,6 +364,8 @@ git commit -m "feat(common): 增加实体审计和分页配置"
 - Modify: `backend/platform-boot/pom.xml`
 - Create: `backend/platform-system/src/main/resources/db/migration/V1__init_system_schema.sql`
 - Create: `backend/platform-system/src/main/resources/db/migration/V2__init_system_permissions.sql`
+- Create: `backend/platform-system/src/main/resources/db/migration/V3__add_bootstrap_lock.sql`
+- Create: `backend/platform-system/src/main/resources/db/migration/V4__add_auth_version_and_role_lookup_index.sql`
 - Create: `backend/platform-system/src/main/java/com/xtong/saas/system/tenant/entity/SystemTenant.java`
 - Create: `backend/platform-system/src/main/java/com/xtong/saas/system/user/entity/SystemUser.java`
 - Create: `backend/platform-system/src/main/java/com/xtong/saas/system/role/entity/SystemRole.java`
@@ -383,7 +387,7 @@ git commit -m "feat(common): 增加实体审计和分页配置"
 
 **Interfaces:**
 - Consumes: Common `BaseEntity` 和 MyBatis-Plus。
-- Produces: 六张系统表、19 个权限码、领域实体和 Mapper，供租户/RBAC/Auth 服务使用。
+- Produces: 六张业务表及一张 Bootstrap 锁表、19 个权限码、领域实体和 Mapper，供租户/RBAC/Auth 服务使用。
 
 - [ ] **Step 1: 增加 System 实际依赖**
 
@@ -418,10 +422,10 @@ void shouldCreateSystemSchemaAndPermissionCatalog() throws Exception {
     DataSource dataSource = new JdbcDataSource();
     ((JdbcDataSource) dataSource).setURL("jdbc:h2:mem:migration;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1");
     Flyway flyway = Flyway.configure().dataSource(dataSource).locations("classpath:db/migration").load();
-    assertThat(flyway.migrate().migrationsExecuted()).isEqualTo(2);
+    assertThat(flyway.migrate().migrationsExecuted()).isEqualTo(4);
     try (Connection connection = dataSource.getConnection()) {
         assertThat(queryForInt(connection, "select count(*) from information_schema.tables where table_name like 'sys_%'"))
-                .isEqualTo(6);
+                .isEqualTo(7);
         assertThat(queryForInt(connection, "select count(*) from sys_menu where permission_code is not null"))
                 .isEqualTo(19);
     }
@@ -433,7 +437,7 @@ void shouldCreateSystemSchemaAndPermissionCatalog() throws Exception {
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=SystemMigrationTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=SystemMigrationTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，迁移脚本不存在。
@@ -451,14 +455,15 @@ idx_sys_role_tenant_status(tenant_id, status)
 uk_sys_menu_permission(permission_code)
 idx_sys_menu_parent_sort(parent_id, sort_order)
 uk_sys_user_role(tenant_id, user_id, role_id)
+idx_user_role_role(tenant_id, role_id, user_id)
 uk_sys_role_menu(tenant_id, role_id, menu_id)
 ```
 
 实体表使用 `BIGINT` 主键、`TIMESTAMP(3)` 审计时间和 `TINYINT` 逻辑删除；关联表包含独立雪花 ID、tenant_id、关联 ID 和创建审计字段，使用物理删除。
 
-- [ ] **Step 5: 编写 V2 权限目录**
+- [ ] **Step 5: 编写 V2-V4 增量迁移**
 
-使用固定、可重复追踪的正整数 ID 插入系统管理目录、用户管理、角色管理及 19 个按钮权限。权限码必须与设计文档逐字一致，SQL 不插入租户、用户或密码。
+V2 使用固定、可重复追踪的正整数 ID 插入系统管理目录、用户管理、角色管理及 19 个按钮权限。权限码必须与设计文档逐字一致，SQL 不插入租户、用户或密码。V3 创建多实例首次初始化锁；V4 为 `sys_user` 增加 `auth_version BIGINT NOT NULL DEFAULT 0`，并增加角色反向用户查询索引 `idx_user_role_role(tenant_id, role_id, user_id)`。
 
 - [ ] **Step 6: 实现实体、枚举和 Mapper**
 
@@ -477,6 +482,7 @@ public class SystemUser extends BaseEntity {
     private UserStatus status;
     private LocalDateTime passwordChangedAt;
     private LocalDateTime lastLoginAt;
+    private Long authVersion;
 }
 
 /** 提供系统用户的 MyBatis-Plus 数据访问入口。 */
@@ -494,7 +500,7 @@ Run:
 & 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am test
 ```
 
-Expected: PASS，迁移两版、6 张表、19 个权限码。
+Expected: PASS，迁移四版、6 张业务表、Bootstrap 锁、用户认证安全版本、角色反向索引和 19 个权限码。
 
 ```powershell
 git add backend/pom.xml backend/platform-common/pom.xml backend/platform-system backend/platform-boot/pom.xml
@@ -545,7 +551,7 @@ void shouldIgnoreOnlyGlobalTables() {
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=TenantScopeTest,TenantLineHandlerTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=TenantScopeTest,TenantLineHandlerTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，上下文和 Handler 不存在。
@@ -650,7 +656,7 @@ void tenantAdminShouldReceiveAllEnabledPermissions() {
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=MenuServiceTest,PermissionServiceTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=MenuServiceTest,PermissionServiceTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，菜单和权限服务不存在。
@@ -690,7 +696,7 @@ git commit -m "feat(system): 实现菜单树和权限加载"
 - Modify: `backend/platform-system/src/main/java/com/xtong/saas/system/role/mapper/SystemUserRoleMapper.java`
 - Create: `backend/platform-system/src/main/java/com/xtong/saas/system/user/dto/UserQueryDTO.java`
 - Create: `backend/platform-system/src/main/java/com/xtong/saas/system/user/dto/CreateUserDTO.java`
-- Create: `backend/platform-system/src/main/java/com/xtong/saas/system/user/dto/UpdateUserDTO.java`
+- Create: `backend/platform-system/src/main/java/com/xtong/saas/system/user/dto/UpdateUserDTO.java`（用户名存在时复用统一身份规范化并使旧会话失效）
 - Create: `backend/platform-system/src/main/java/com/xtong/saas/system/user/dto/ResetPasswordDTO.java`
 - Create: `backend/platform-system/src/main/java/com/xtong/saas/system/user/dto/AssignUserRolesDTO.java`
 - Create: `backend/platform-system/src/main/java/com/xtong/saas/system/user/vo/UserVO.java`
@@ -721,7 +727,7 @@ public interface SessionRevocationService {
 @Test
 void shouldRejectRoleFromAnotherTenant() {
     when(roleMapper.countByTenantAndIds(1L, Set.of(99L))).thenReturn(0L);
-    assertThatThrownBy(() -> service.assignRoles(10L, Set.of(99L), principal))
+    assertThatThrownBy(() -> service.assignRoles(10L, Set.of(99L)))
             .isInstanceOf(BusinessException.class)
             .extracting("errorCode").isEqualTo(UserErrorCode.INVALID_ROLE_ASSIGNMENT);
 }
@@ -732,7 +738,7 @@ void shouldRejectRoleFromAnotherTenant() {
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=UserServiceTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=UserServiceTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，DTO、Service 和错误码不存在。
@@ -759,7 +765,7 @@ DTO 使用 Jakarta Validation，密码同时校验最少 8 字符和 UTF-8 不�
 
 - [ ] **Step 4: 实现事务和租户规则**
 
-创建用户时检查当前租户用户名唯一、BCrypt 编码密码、校验角色归属并在事务中写入关系。更新不能修改 username。停用、密码重置和删除成功后撤销该用户全部会话；不能操作当前用户；最后一个有效租户管理员不能被停用或删除。
+创建用户时检查当前租户用户名唯一、BCrypt 编码密码、校验角色归属并在事务中写入关系。更新 username 时复用统一身份规范化与唯一性校验，并递增认证安全版本使旧会话失效。停用、密码重置和删除成功后撤销该用户全部会话；不能操作当前用户；最后一个有效租户管理员不能被停用或删除。
 
 - [ ] **Step 5: 运行用户测试并提交**
 
@@ -820,7 +826,7 @@ void shouldReplaceMenusAndRevokeAffectedUsersInOneTransaction() {
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=RoleServiceTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=RoleServiceTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，角色服务不存在。
@@ -895,21 +901,22 @@ void shouldRoundTripRequiredJwtClaims() {
 }
 
 @Test
-void shouldConsumeRefreshTokenOnlyOnce() {
+void shouldRotateRefreshTokenOnlyOnce() {
     store.create(session, refreshTokenHash, Duration.ofDays(7));
-    assertThat(store.consumeRefreshToken(refreshTokenHash)).contains("s1");
-    assertThat(store.consumeRefreshToken(refreshTokenHash)).isEmpty();
+    assertThat(store.peekRefreshSession(refreshTokenHash)).contains(session);
+    assertThat(store.rotateRefreshToken(refreshTokenHash, newHash, Duration.ofDays(7))).isPresent();
+    assertThat(store.rotateRefreshToken(refreshTokenHash, anotherHash, Duration.ofDays(7))).isEmpty();
 }
 ```
 
-Redis 测试 Mock `StringRedisTemplate` 和 Value/Set Operations，断言完整 Token 从未作为 Key 或 Value 传入。
+Redis 测试 Mock `StringRedisTemplate`、Value Operations 与 Lua 调用，断言完整 Token 从未作为 Key 或 Value 传入，并校验版本化 ZSET 索引、裁剪和绝对过期协议。
 
 - [ ] **Step 2: 运行测试确认失败**
 
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=JwtAccessTokenServiceTest,RedisSessionStoreTest,RedisLoginFailureServiceTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=JwtAccessTokenServiceTest,RedisSessionStoreTest,RedisLoginFailureServiceTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，认证基础类型不存在。
@@ -939,16 +946,19 @@ public record AuthProperties(
 
 ```java
 public interface SessionStore {
-    void create(AuthSession session, String refreshTokenHash, Duration ttl);
+    boolean create(AuthSession session, String refreshTokenHash, Duration ttl);
     Optional<AuthSession> find(String sessionId);
-    Optional<String> consumeRefreshToken(String refreshTokenHash);
-    void replaceRefreshToken(AuthSession session, String newRefreshTokenHash, Duration ttl);
+    Optional<AuthSession> peekRefreshSession(String refreshTokenHash);
+    Optional<AuthSession> rotateRefreshToken(
+            String currentRefreshTokenHash, String newRefreshTokenHash, Duration ttl);
     void delete(String sessionId);
     void deleteAll(long tenantId, long userId);
 }
 ```
 
-`AuthSession` 保存 sessionId、tenantId、userId、username、displayName、权限集合和当前 refreshTokenHash。`RedisSessionStore` 同时实现 `SessionStore` 与 Task 7 的 `SessionRevocationService`。消费 Refresh Token 使用 Redis `GETDEL` 等价原子操作。用户会话集合仅保存 sessionId，并与 Refresh TTL 同步过期。
+`AuthSession` 保存 sessionId、tenantId、userId、username、displayName、权限集合、认证安全版本和当前 refreshTokenHash。`RedisSessionStore` 同时实现 `SessionStore` 与 Task 7 的 `SessionRevocationService`。刷新先只读定位会话，再取得租户行锁并校验租户、用户状态和认证安全版本，最后由 Lua 原子轮换 Refresh 摘要。用户会话索引使用版本化 `saas:portal:auth:v2:user-sessions:{tenantId}:{userId}` ZSET，Lua 通过 Redis `TIME` 计算当前毫秒，Java 仅传相对 TTL；score 为会话绝对过期毫秒，索引 TTL 始终取清理后最大 score。
+
+滚动升级期间不对旧 `saas:portal:auth:user-sessions:*` SET 执行 ZSET 命令。旧 session/refresh 键仍可读取，旧会话缺失的认证安全版本按 `0` 处理；旧 Refresh 成功轮换后加入 v2 索引。管理事务递增数据库 `auth_version`，因此旧索引无法清理时仍由逐请求和刷新校验阻止旧会话复活。
 
 - [ ] **Step 6: 实现登录失败限制**
 
@@ -1000,8 +1010,9 @@ void shouldLoginWithTenantUsernameAndPassword() {
 @Test
 void shouldRotateRefreshToken() {
     TokenResponse refreshed = authService.refresh(new RefreshTokenRequest(oldRefreshToken));
-    verify(sessionStore).consumeRefreshToken(oldHash);
-    verify(sessionStore).replaceRefreshToken(any(), eq(newHash), any());
+    verify(sessionStore).peekRefreshSession(oldHash);
+    verify(tenantService).lockAndRequireEnabled(tenantId);
+    verify(sessionStore).rotateRefreshToken(oldHash, newHash, refreshTtl);
     assertThat(refreshed.refreshToken()).isNotEqualTo(oldRefreshToken);
 }
 ```
@@ -1028,7 +1039,7 @@ void shouldInitializeOnlyWhenNoTenantExists() {
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=AuthServiceTest,SystemBootstrapInitializerTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=AuthServiceTest,SystemBootstrapInitializerTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，认证和初始化用例不存在。
@@ -1044,11 +1055,11 @@ public interface AuthService {
 }
 ```
 
-登录查询顺序固定为租户、登录限制、租户作用域用户、密码、权限。用户或密码错误返回同一错误码。刷新必须先原子消费旧摘要，再确认会话存在，生成并保存新 Token；任何失败不得恢复旧 Refresh Token。
+登录先规范化 tenantCode/username 并执行前置限流；已知租户候选取得租户行 `FOR UPDATE` 后在锁内执行二次限流，再校验租户、用户、密码与权限，失败计数也在该锁事务内写入。用户或密码错误返回同一错误码。刷新按 `peek refresh session -> tenant lock -> user status/authVersion -> atomic rotate` 执行；任何失败不得恢复旧 Refresh Token。
 
 - [ ] **Step 5: 实现首次初始化事务**
 
-`BootstrapProperties` 使用前缀 `saas.bootstrap`。初始化器只在 `sys_tenant` 空时运行，在一个事务和明确 TenantScope 中创建租户、`TENANT_ADMIN` 角色、BCrypt 管理员及用户角色关系。管理员用户名和租户编码先 trim 并规范化，密码不 trim。
+`BootstrapProperties` 使用前缀 `saas.bootstrap`。初始化器只在 `sys_tenant` 空时运行，在一个事务和明确 TenantScope 中创建租户、`TENANT_ADMIN` 角色、BCrypt 管理员及用户角色关系。管理员用户名和租户编码统一执行 `strip`、`Locale.ROOT` 小写及 ASCII 身份规则校验，密码不 trim。
 
 - [ ] **Step 6: 运行测试并提交**
 
@@ -1101,7 +1112,7 @@ void protectedEndpointWithoutTokenShouldReturnUnified401() throws Exception {
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=JwtAuthenticationFilterTest,AuthControllerTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=JwtAuthenticationFilterTest,AuthControllerTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，Security 配置和 Controller 不存在。
@@ -1203,7 +1214,7 @@ void shouldRejectUserDeleteWithoutDeleteAuthority() throws Exception {
 Run:
 
 ```powershell
-& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=UserControllerTest,RoleControllerTest,MenuControllerTest test
+& 'D:\develop\environment\apache\maven\apache-maven-3.9.1\bin\mvn.cmd' -f backend\pom.xml -pl platform-system -am -Dtest=UserControllerTest,RoleControllerTest,MenuControllerTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Expected: FAIL，Controller 不存在。
@@ -1292,7 +1303,7 @@ saas:
     admin-password: TestPassword123
 ```
 
-集成测试使用 `@SpringBootTest`、`@ActiveProfiles("test")`，断言 Flyway 两版迁移、首租户/管理员/内置角色存在，并重复调用初始化器不新增数据。
+集成测试使用 `@SpringBootTest`、`@ActiveProfiles("test")`，断言 Flyway 四版迁移、首租户/管理员/内置角色存在，并重复调用初始化器不新增数据。
 
 - [ ] **Step 2: 运行 Boot 测试确认配置尚未完整**
 
