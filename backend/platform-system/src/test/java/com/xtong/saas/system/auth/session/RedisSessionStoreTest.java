@@ -79,7 +79,7 @@ class RedisSessionStoreTest {
                 eq(List.of(
                         "saas:portal:auth:session:s1",
                         "saas:portal:auth:refresh:" + refreshTokenHash,
-                        "saas:portal:auth:user-sessions:1:2")),
+                        "saas:portal:auth:v2:user-sessions:1:2")),
                 serialized.capture(), eq("s1"), eq(TTL_MILLIS), anyString(), anyString());
         @SuppressWarnings("unchecked")
         Map<String, Object> stored = objectMapper.readValue(serialized.getValue(), Map.class);
@@ -89,7 +89,7 @@ class RedisSessionStoreTest {
                 .containsEntry("refreshTokenHash", refreshTokenHash);
         assertThat(serialized.getValue()).doesNotContain(rawRefreshToken);
         assertThat(script.getValue().getScriptAsString())
-                .contains("EXISTS", "SET", "ZREMRANGEBYSCORE", "ZADD", "PEXPIRE");
+                .contains("EXISTS", "SET", "ZREMRANGEBYSCORE", "ZADD", "ZREVRANGE", "PEXPIREAT");
         verify(redisTemplate, never()).delete(any(String.class));
     }
 
@@ -105,14 +105,43 @@ class RedisSessionStoreTest {
                 eq(List.of(
                         "saas:portal:auth:session:s1",
                         "saas:portal:auth:refresh:first-hash",
-                        "saas:portal:auth:user-sessions:1:2")),
+                        "saas:portal:auth:v2:user-sessions:1:2")),
                 any(), eq("s1"), eq(TTL_MILLIS), anyString(), anyString());
         verify(redisTemplate).execute(any(RedisScript.class),
                 eq(List.of(
                         "saas:portal:auth:session:s2",
                         "saas:portal:auth:refresh:second-hash",
-                        "saas:portal:auth:user-sessions:1:2")),
+                        "saas:portal:auth:v2:user-sessions:1:2")),
                 any(), eq("s2"), eq(TTL_MILLIS), anyString(), anyString());
+    }
+
+    @Test
+    void shouldNeverApplyZsetCommandsToLegacySetKeyDuringRollingUpgrade() {
+        doReturn(1L).when(redisTemplate)
+                .execute(any(RedisScript.class), anyList(), any(Object[].class));
+        String legacySetKey = "saas:portal:auth:user-sessions:1:2";
+
+        store.create(session("s1", 1L, 2L, "hash"), "hash", TTL);
+
+        ArgumentCaptor<List<String>> keys = ArgumentCaptor.forClass(List.class);
+        verify(redisTemplate).execute(any(RedisScript.class), keys.capture(), any(Object[].class));
+        assertThat(keys.getValue())
+                .contains("saas:portal:auth:v2:user-sessions:1:2")
+                .doesNotContain(legacySetKey);
+    }
+
+    @Test
+    void shouldKeepIndexExpiryAtLatestMemberWhenConfiguredTtlIsShortened() {
+        doReturn(1L).when(redisTemplate)
+                .execute(any(RedisScript.class), anyList(), any(Object[].class));
+
+        store.create(session("new-session", 1L, 2L, "hash"), "hash", Duration.ofMinutes(5));
+
+        ArgumentCaptor<RedisScript<Long>> script = redisScriptCaptor();
+        verify(redisTemplate).execute(script.capture(), anyList(), any(Object[].class));
+        assertThat(script.getValue().getScriptAsString())
+                .contains("ZREVRANGE', KEYS[3], 0, 0, 'WITHSCORES'", "PEXPIREAT', KEYS[3], latest[2]")
+                .doesNotContain("PEXPIRE', KEYS[3]");
     }
 
     @Test
@@ -192,10 +221,11 @@ class RedisSessionStoreTest {
                         "saas:portal:auth:refresh:old-hash",
                         "saas:portal:auth:refresh:new-hash")),
                 eq("saas:portal:auth:session:"),
-                eq("saas:portal:auth:user-sessions:"),
+                eq("saas:portal:auth:v2:user-sessions:"),
                 eq("old-hash"), eq("new-hash"), eq(TTL_MILLIS), anyString(), anyString());
         assertThat(scripts.getValue().getScriptAsString())
-                .contains("GET", "EXISTS", "redis.call('DEL', KEYS[1])", "ZREMRANGEBYSCORE", "ZADD", "PEXPIRE");
+                .contains("GET", "EXISTS", "redis.call('DEL', KEYS[1])", "ZREMRANGEBYSCORE",
+                        "ZADD", "ZREVRANGE", "PEXPIREAT");
         verify(redisTemplate, never()).delete("saas:portal:auth:refresh:old-hash");
     }
 
@@ -212,7 +242,7 @@ class RedisSessionStoreTest {
         order.verify(redisTemplate).execute(
                 any(RedisScript.class),
                 eq(List.of("saas:portal:auth:session:s1")),
-                eq("saas:portal:auth:refresh:"), eq("saas:portal:auth:user-sessions:"), anyString());
+                eq("saas:portal:auth:refresh:"), eq("saas:portal:auth:v2:user-sessions:"), anyString());
         order.verify(redisTemplate).execute(
                 any(RedisScript.class),
                 eq(List.of(
@@ -233,9 +263,9 @@ class RedisSessionStoreTest {
         verify(redisTemplate).execute(
                 script.capture(),
                 eq(List.of("saas:portal:auth:session:s1")),
-                eq("saas:portal:auth:refresh:"), eq("saas:portal:auth:user-sessions:"), anyString());
+                eq("saas:portal:auth:refresh:"), eq("saas:portal:auth:v2:user-sessions:"), anyString());
         assertThat(script.getValue().getScriptAsString())
-                .contains("GET", "DEL", "ZREMRANGEBYSCORE", "ZREM", "ZCARD");
+                .contains("GET", "DEL", "ZREMRANGEBYSCORE", "ZREM", "ZREVRANGE", "PEXPIREAT");
         verify(redisTemplate, never()).delete(any(String.class));
     }
 
@@ -249,7 +279,7 @@ class RedisSessionStoreTest {
         ArgumentCaptor<RedisScript<Long>> script = redisScriptCaptor();
         verify(redisTemplate).execute(
                 script.capture(),
-                eq(List.of("saas:portal:auth:user-sessions:1:2")),
+                eq(List.of("saas:portal:auth:v2:user-sessions:1:2")),
                 eq("saas:portal:auth:session:"), eq("saas:portal:auth:refresh:"), anyString());
         assertThat(script.getValue().getScriptAsString())
                 .contains("ZREMRANGEBYSCORE", "ZRANGE", "GET", "DEL");

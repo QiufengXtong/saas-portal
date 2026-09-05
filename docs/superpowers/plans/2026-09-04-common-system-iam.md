@@ -759,7 +759,7 @@ DTO 使用 Jakarta Validation，密码同时校验最少 8 字符和 UTF-8 不�
 
 - [ ] **Step 4: 实现事务和租户规则**
 
-创建用户时检查当前租户用户名唯一、BCrypt 编码密码、校验角色归属并在事务中写入关系。更新不能修改 username。停用、密码重置和删除成功后撤销该用户全部会话；不能操作当前用户；最后一个有效租户管理员不能被停用或删除。
+创建用户时检查当前租户用户名唯一、BCrypt 编码密码、校验角色归属并在事务中写入关系。更新 username 时复用统一身份规范化与唯一性校验，并递增认证安全版本使旧会话失效。停用、密码重置和删除成功后撤销该用户全部会话；不能操作当前用户；最后一个有效租户管理员不能被停用或删除。
 
 - [ ] **Step 5: 运行用户测试并提交**
 
@@ -895,14 +895,15 @@ void shouldRoundTripRequiredJwtClaims() {
 }
 
 @Test
-void shouldConsumeRefreshTokenOnlyOnce() {
+void shouldRotateRefreshTokenOnlyOnce() {
     store.create(session, refreshTokenHash, Duration.ofDays(7));
-    assertThat(store.consumeRefreshToken(refreshTokenHash)).contains("s1");
-    assertThat(store.consumeRefreshToken(refreshTokenHash)).isEmpty();
+    assertThat(store.peekRefreshSession(refreshTokenHash)).contains(session);
+    assertThat(store.rotateRefreshToken(refreshTokenHash, newHash, Duration.ofDays(7))).isPresent();
+    assertThat(store.rotateRefreshToken(refreshTokenHash, anotherHash, Duration.ofDays(7))).isEmpty();
 }
 ```
 
-Redis 测试 Mock `StringRedisTemplate` 和 Value/Set Operations，断言完整 Token 从未作为 Key 或 Value 传入。
+Redis 测试 Mock `StringRedisTemplate`、Value Operations 与 Lua 调用，断言完整 Token 从未作为 Key 或 Value 传入，并校验版本化 ZSET 索引、裁剪和绝对过期协议。
 
 - [ ] **Step 2: 运行测试确认失败**
 
@@ -939,16 +940,19 @@ public record AuthProperties(
 
 ```java
 public interface SessionStore {
-    void create(AuthSession session, String refreshTokenHash, Duration ttl);
+    boolean create(AuthSession session, String refreshTokenHash, Duration ttl);
     Optional<AuthSession> find(String sessionId);
-    Optional<String> consumeRefreshToken(String refreshTokenHash);
-    void replaceRefreshToken(AuthSession session, String newRefreshTokenHash, Duration ttl);
+    Optional<AuthSession> peekRefreshSession(String refreshTokenHash);
+    Optional<AuthSession> rotateRefreshToken(
+            String currentRefreshTokenHash, String newRefreshTokenHash, Duration ttl);
     void delete(String sessionId);
     void deleteAll(long tenantId, long userId);
 }
 ```
 
-`AuthSession` 保存 sessionId、tenantId、userId、username、displayName、权限集合和当前 refreshTokenHash。`RedisSessionStore` 同时实现 `SessionStore` 与 Task 7 的 `SessionRevocationService`。消费 Refresh Token 使用 Redis `GETDEL` 等价原子操作。用户会话集合仅保存 sessionId，并与 Refresh TTL 同步过期。
+`AuthSession` 保存 sessionId、tenantId、userId、username、displayName、权限集合、认证安全版本和当前 refreshTokenHash。`RedisSessionStore` 同时实现 `SessionStore` 与 Task 7 的 `SessionRevocationService`。刷新先只读定位会话，再取得租户行锁并校验租户、用户状态和认证安全版本，最后由 Lua 原子轮换 Refresh 摘要。用户会话索引使用版本化 `saas:portal:auth:v2:user-sessions:{tenantId}:{userId}` ZSET，score 为会话绝对过期毫秒；索引 TTL 始终取清理后最大 score。
+
+滚动升级期间不对旧 `saas:portal:auth:user-sessions:*` SET 执行 ZSET 命令。旧 session/refresh 键仍可读取，旧会话缺失的认证安全版本按 `0` 处理；旧 Refresh 成功轮换后加入 v2 索引。管理事务递增数据库 `auth_version`，因此旧索引无法清理时仍由逐请求和刷新校验阻止旧会话复活。
 
 - [ ] **Step 6: 实现登录失败限制**
 
@@ -1000,8 +1004,9 @@ void shouldLoginWithTenantUsernameAndPassword() {
 @Test
 void shouldRotateRefreshToken() {
     TokenResponse refreshed = authService.refresh(new RefreshTokenRequest(oldRefreshToken));
-    verify(sessionStore).consumeRefreshToken(oldHash);
-    verify(sessionStore).replaceRefreshToken(any(), eq(newHash), any());
+    verify(sessionStore).peekRefreshSession(oldHash);
+    verify(tenantService).lockAndRequireEnabled(tenantId);
+    verify(sessionStore).rotateRefreshToken(oldHash, newHash, refreshTtl);
     assertThat(refreshed.refreshToken()).isNotEqualTo(oldRefreshToken);
 }
 ```
@@ -1048,7 +1053,7 @@ public interface AuthService {
 
 - [ ] **Step 5: 实现首次初始化事务**
 
-`BootstrapProperties` 使用前缀 `saas.bootstrap`。初始化器只在 `sys_tenant` 空时运行，在一个事务和明确 TenantScope 中创建租户、`TENANT_ADMIN` 角色、BCrypt 管理员及用户角色关系。管理员用户名和租户编码先 trim 并规范化，密码不 trim。
+`BootstrapProperties` 使用前缀 `saas.bootstrap`。初始化器只在 `sys_tenant` 空时运行，在一个事务和明确 TenantScope 中创建租户、`TENANT_ADMIN` 角色、BCrypt 管理员及用户角色关系。管理员用户名和租户编码统一执行 `strip`、`Locale.ROOT` 小写及 ASCII 身份规则校验，密码不 trim。
 
 - [ ] **Step 6: 运行测试并提交**
 

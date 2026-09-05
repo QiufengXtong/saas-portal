@@ -25,7 +25,7 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
 
     private static final String SESSION_KEY_PREFIX = "saas:portal:auth:session:";
     private static final String REFRESH_KEY_PREFIX = "saas:portal:auth:refresh:";
-    private static final String USER_SESSIONS_KEY_PREFIX = "saas:portal:auth:user-sessions:";
+    private static final String USER_SESSIONS_KEY_PREFIX = "saas:portal:auth:v2:user-sessions:";
 
     /** 原子拒绝会话或摘要碰撞，并同时创建会话、摘要映射和用户索引。 */
     private static final DefaultRedisScript<Long> CREATE_SCRIPT = new DefaultRedisScript<>("""
@@ -43,7 +43,8 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
             end
             redis.call('ZREMRANGEBYSCORE', KEYS[3], '-inf', ARGV[4])
             redis.call('ZADD', KEYS[3], ARGV[5], ARGV[2])
-            redis.call('PEXPIRE', KEYS[3], ARGV[3])
+            local latest = redis.call('ZREVRANGE', KEYS[3], 0, 0, 'WITHSCORES')
+            redis.call('PEXPIREAT', KEYS[3], latest[2])
             return 1
             """, Long.class);
 
@@ -79,7 +80,8 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
             local userKey = ARGV[2] .. tostring(stored.tenantId) .. ':' .. tostring(stored.userId)
             redis.call('ZREMRANGEBYSCORE', userKey, '-inf', ARGV[6])
             redis.call('ZADD', userKey, ARGV[7], sessionId)
-            redis.call('PEXPIRE', userKey, ARGV[5])
+            local latest = redis.call('ZREVRANGE', userKey, 0, 0, 'WITHSCORES')
+            redis.call('PEXPIREAT', userKey, latest[2])
             return rotated
             """, String.class);
 
@@ -102,8 +104,11 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
                 local userKey = ARGV[2] .. tostring(stored.tenantId) .. ':' .. tostring(stored.userId)
                 redis.call('ZREMRANGEBYSCORE', userKey, '-inf', ARGV[3])
                 redis.call('ZREM', userKey, stored.sessionId)
-                if redis.call('ZCARD', userKey) == 0 then
+                local latest = redis.call('ZREVRANGE', userKey, 0, 0, 'WITHSCORES')
+                if #latest == 0 then
                     redis.call('DEL', userKey)
+                else
+                    redis.call('PEXPIREAT', userKey, latest[2])
                 end
             end
             return 1

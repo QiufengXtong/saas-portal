@@ -126,6 +126,7 @@ class AuthServiceTest {
         order.verify(loginFailureService).assertAllowed("default", "admin");
         order.verify(tenantService).requireEnabledByCode("default");
         order.verify(tenantService).lockAndRequireEnabled(11L, "default");
+        order.verify(loginFailureService).assertAllowed("default", "admin");
         order.verify(userService).requireEnabledForLogin(11L, "admin");
         order.verify(passwordEncoder).matches(" Secret123 ", "encoded");
         order.verify(permissionService).loadUserPermissions(11L, 22L);
@@ -136,6 +137,26 @@ class AuthServiceTest {
                         Set.of("system:user:list"), "refresh-hash-1")),
                 eq("refresh-hash-1"),
                 eq(REFRESH_TTL));
+    }
+
+    @Test
+    void shouldStopKnownTenantAttemptWhenSecondFailureCheckIsLocked() {
+        when(tenantService.requireEnabledByCode("default")).thenReturn(enabledTenant(11L));
+        org.mockito.Mockito.doNothing()
+                .doThrow(new BusinessException(AuthErrorCode.LOGIN_LOCKED))
+                .when(loginFailureService).assertAllowed("default", "admin");
+
+        assertThatThrownBy(() -> authService.login(new LoginRequest("default", "admin", "Secret123")))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(AuthErrorCode.LOGIN_LOCKED);
+
+        InOrder order = inOrder(loginFailureService, tenantService);
+        order.verify(loginFailureService).assertAllowed("default", "admin");
+        order.verify(tenantService).requireEnabledByCode("default");
+        order.verify(tenantService).lockAndRequireEnabled(11L, "default");
+        order.verify(loginFailureService).assertAllowed("default", "admin");
+        verifyNoInteractions(userService, passwordEncoder, permissionService, sessionStore);
     }
 
     @Test
@@ -408,25 +429,32 @@ class AuthServiceTest {
     @Test
     void shouldRejectLoginPasswordBeyondBcryptUtf8LimitAtServiceBoundary() {
         LoginRequest request = new LoginRequest("default", "admin", "密".repeat(25));
+        when(tenantService.requireEnabledByCode("default")).thenReturn(enabledTenant(11L));
 
         assertThatThrownBy(() -> authService.login(request))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
                 .isEqualTo(AuthErrorCode.INVALID_CREDENTIALS);
-        verify(loginFailureService).assertAllowed("default", "admin");
+        verify(loginFailureService, times(2)).assertAllowed("default", "admin");
         verify(loginFailureService).recordFailure("default", "admin");
-        verifyNoInteractions(tenantService, passwordEncoder, userService, permissionService, sessionStore);
+        verify(tenantService).lockAndRequireEnabled(11L, "default");
+        verify(passwordEncoder).matches(eq("invalid-password"), any());
+        verifyNoInteractions(userService, permissionService, sessionStore);
     }
 
     @Test
     void shouldRejectEmptyLoginPasswordAtServiceBoundary() {
+        when(tenantService.requireEnabledByCode("default")).thenReturn(enabledTenant(11L));
+
         assertThatThrownBy(() -> authService.login(new LoginRequest("default", "admin", "")))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
                 .isEqualTo(AuthErrorCode.INVALID_CREDENTIALS);
-        verify(loginFailureService).assertAllowed("default", "admin");
+        verify(loginFailureService, times(2)).assertAllowed("default", "admin");
         verify(loginFailureService).recordFailure("default", "admin");
-        verifyNoInteractions(tenantService, passwordEncoder, userService, permissionService, sessionStore);
+        verify(tenantService).lockAndRequireEnabled(11L, "default");
+        verify(passwordEncoder).matches(eq("invalid-password"), any());
+        verifyNoInteractions(userService, permissionService, sessionStore);
     }
 
     private void stubSuccessfulIdentity() {

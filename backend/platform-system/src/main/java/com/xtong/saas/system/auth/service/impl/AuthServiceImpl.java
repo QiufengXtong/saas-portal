@@ -44,6 +44,7 @@ public class AuthServiceImpl implements AuthService {
 
     private static final String BEARER_TOKEN_TYPE = "Bearer";
     private static final int SESSION_CREATION_ATTEMPTS = 3;
+    private static final String DUMMY_PASSWORD_INPUT = "invalid-password";
     private static final String DUMMY_PASSWORD_HASH =
             "$2a$12$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
 
@@ -93,11 +94,13 @@ public class AuthServiceImpl implements AuthService {
         String username = IdentityNormalizer.normalizeForLogin(request.username())
                 .orElseThrow(() -> new BusinessException(AuthErrorCode.INVALID_CREDENTIALS));
         loginFailureService.assertAllowed(tenantCode, username);
-        if (!isBcryptPasswordLength(request.password())) {
-            throw invalidCredentials(tenantCode, username);
-        }
         SystemTenant tenant = requireLoginTenant(tenantCode, username, request.password());
         tenantService.lockAndRequireEnabled(tenant.getId(), tenantCode);
+        loginFailureService.assertAllowed(tenantCode, username);
+        if (!isBcryptPasswordLength(request.password())) {
+            runDummyPasswordCheck(request.password());
+            throw invalidCredentials(tenantCode, username);
+        }
         CreatedSession created = TenantScope.call(tenant.getId(), () -> {
             SystemUser user = requireLoginUser(tenant.getId(), tenantCode, username, request.password());
             if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
@@ -220,7 +223,8 @@ public class AuthServiceImpl implements AuthService {
     }
 
     private void runDummyPasswordCheck(String password) {
-        passwordEncoder.matches(password, DUMMY_PASSWORD_HASH);
+        String boundedPassword = isBcryptPasswordLength(password) ? password : DUMMY_PASSWORD_INPUT;
+        passwordEncoder.matches(boundedPassword, DUMMY_PASSWORD_HASH);
     }
 
     private BusinessException invalidCredentials(String tenantCode, String username) {
