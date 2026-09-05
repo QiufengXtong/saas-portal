@@ -387,7 +387,7 @@ git commit -m "feat(common): 增加实体审计和分页配置"
 
 **Interfaces:**
 - Consumes: Common `BaseEntity` 和 MyBatis-Plus。
-- Produces: 六张系统表、19 个权限码、领域实体和 Mapper，供租户/RBAC/Auth 服务使用。
+- Produces: 六张业务表及一张 Bootstrap 锁表、19 个权限码、领域实体和 Mapper，供租户/RBAC/Auth 服务使用。
 
 - [ ] **Step 1: 增加 System 实际依赖**
 
