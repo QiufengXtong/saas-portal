@@ -29,6 +29,8 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
 
     /** 原子拒绝会话或摘要碰撞，并同时创建会话、摘要映射和用户索引。 */
     private static final DefaultRedisScript<Long> CREATE_SCRIPT = new DefaultRedisScript<>("""
+            local redisTime = redis.call('TIME')
+            local nowMillis = tonumber(redisTime[1]) * 1000 + math.floor(tonumber(redisTime[2]) / 1000)
             if redis.call('EXISTS', KEYS[1]) == 1 or redis.call('EXISTS', KEYS[2]) == 1 then
                 return 0
             end
@@ -41,8 +43,8 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
                 redis.call('DEL', KEYS[1])
                 return 0
             end
-            redis.call('ZREMRANGEBYSCORE', KEYS[3], '-inf', ARGV[4])
-            redis.call('ZADD', KEYS[3], ARGV[5], ARGV[2])
+            redis.call('ZREMRANGEBYSCORE', KEYS[3], '-inf', nowMillis)
+            redis.call('ZADD', KEYS[3], nowMillis + tonumber(ARGV[3]), ARGV[2])
             local latest = redis.call('ZREVRANGE', KEYS[3], 0, 0, 'WITHSCORES')
             redis.call('PEXPIREAT', KEYS[3], latest[2])
             return 1
@@ -50,6 +52,8 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
 
     /** 原子校验旧摘要与有效会话、写入新摘要、删除旧摘要并续期用户索引。 */
     private static final DefaultRedisScript<String> ROTATE_REFRESH_SCRIPT = new DefaultRedisScript<>("""
+            local redisTime = redis.call('TIME')
+            local nowMillis = tonumber(redisTime[1]) * 1000 + math.floor(tonumber(redisTime[2]) / 1000)
             if KEYS[1] == KEYS[2] or redis.call('EXISTS', KEYS[2]) == 1 then
                 return false
             end
@@ -78,8 +82,8 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
             redis.call('SET', KEYS[2], sessionId, 'PX', ARGV[5])
             redis.call('DEL', KEYS[1])
             local userKey = ARGV[2] .. tostring(stored.tenantId) .. ':' .. tostring(stored.userId)
-            redis.call('ZREMRANGEBYSCORE', userKey, '-inf', ARGV[6])
-            redis.call('ZADD', userKey, ARGV[7], sessionId)
+            redis.call('ZREMRANGEBYSCORE', userKey, '-inf', nowMillis)
+            redis.call('ZADD', userKey, nowMillis + tonumber(ARGV[5]), sessionId)
             local latest = redis.call('ZREVRANGE', userKey, 0, 0, 'WITHSCORES')
             redis.call('PEXPIREAT', userKey, latest[2])
             return rotated
@@ -87,6 +91,8 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
 
     /** 原子删除单会话、其当前 Refresh 摘要以及用户集合成员。 */
     private static final DefaultRedisScript<Long> DELETE_SCRIPT = new DefaultRedisScript<>("""
+            local redisTime = redis.call('TIME')
+            local nowMillis = tonumber(redisTime[1]) * 1000 + math.floor(tonumber(redisTime[2]) / 1000)
             local serialized = redis.call('GET', KEYS[1])
             if not serialized then
                 return 0
@@ -102,7 +108,7 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
             end
             if stored.tenantId and stored.userId and stored.sessionId then
                 local userKey = ARGV[2] .. tostring(stored.tenantId) .. ':' .. tostring(stored.userId)
-                redis.call('ZREMRANGEBYSCORE', userKey, '-inf', ARGV[3])
+                redis.call('ZREMRANGEBYSCORE', userKey, '-inf', nowMillis)
                 redis.call('ZREM', userKey, stored.sessionId)
                 local latest = redis.call('ZREVRANGE', userKey, 0, 0, 'WITHSCORES')
                 if #latest == 0 then
@@ -116,7 +122,9 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
 
     /** 原子遍历用户索引并删除该用户全部会话及其当前 Refresh 摘要。 */
     private static final DefaultRedisScript<Long> DELETE_ALL_SCRIPT = new DefaultRedisScript<>("""
-            redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[3])
+            local redisTime = redis.call('TIME')
+            local nowMillis = tonumber(redisTime[1]) * 1000 + math.floor(tonumber(redisTime[2]) / 1000)
+            redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', nowMillis)
             local sessionIds = redis.call('ZRANGE', KEYS[1], 0, -1)
             for _, sessionId in ipairs(sessionIds) do
                 local sessionKey = ARGV[1] .. sessionId
@@ -146,8 +154,6 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
         Objects.requireNonNull(session, "session must not be null");
         Objects.requireNonNull(refreshTokenHash, "refreshTokenHash must not be null");
         String ttlMillis = ttlMillis(ttl);
-        long now = System.currentTimeMillis();
-        String expiresAt = Long.toString(Math.addExact(now, Long.parseLong(ttlMillis)));
         StoredAuthSession storedSession = StoredAuthSession.from(session, refreshTokenHash);
         Long result = redisTemplate.execute(
                 CREATE_SCRIPT,
@@ -157,9 +163,7 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
                         userSessionsKey(session.tenantId(), session.userId())),
                 serialize(storedSession),
                 session.sessionId(),
-                ttlMillis,
-                Long.toString(now),
-                expiresAt);
+                ttlMillis);
         return Long.valueOf(1L).equals(result);
     }
 
@@ -190,9 +194,7 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
                 USER_SESSIONS_KEY_PREFIX,
                 currentRefreshTokenHash,
                 newRefreshTokenHash,
-                ttlMillis(ttl),
-                Long.toString(System.currentTimeMillis()),
-                expiresAt(ttl));
+                ttlMillis(ttl));
         return deserialize(rotated);
     }
 
@@ -202,8 +204,7 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
                 DELETE_SCRIPT,
                 List.of(sessionKey(sessionId)),
                 REFRESH_KEY_PREFIX,
-                USER_SESSIONS_KEY_PREFIX,
-                Long.toString(System.currentTimeMillis()));
+                USER_SESSIONS_KEY_PREFIX);
     }
 
     @Override
@@ -212,8 +213,7 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
                 DELETE_ALL_SCRIPT,
                 List.of(userSessionsKey(tenantId, userId)),
                 SESSION_KEY_PREFIX,
-                REFRESH_KEY_PREFIX,
-                Long.toString(System.currentTimeMillis()));
+                REFRESH_KEY_PREFIX);
     }
 
     @Override
@@ -257,10 +257,6 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
             throw new IllegalArgumentException("ttl must be at least 1 millisecond");
         }
         return Long.toString(milliseconds);
-    }
-
-    private static String expiresAt(Duration ttl) {
-        return Long.toString(Math.addExact(System.currentTimeMillis(), Long.parseLong(ttlMillis(ttl))));
     }
 
     private static String sessionKey(String sessionId) {

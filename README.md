@@ -112,7 +112,7 @@ Copy-Item .env.example .env
 
 租户编码和用户名会先去除首尾空白并按 `Locale.ROOT` 转为小写，之后必须匹配 ASCII 规则 `[a-z0-9][a-z0-9._-]*`，最大 64 个字符；冒号、内部空白、重音字符及其他 Unicode 字符均不允许。数据库只保存规范化值，登录失败键也只使用已规范化的合法身份。
 
-用户会话索引使用版本化 Redis ZSET 键 `saas:portal:auth:v2:user-sessions:{tenantId}:{userId}`，成员过期时间决定索引的绝对 TTL。滚动升级不会对旧 `saas:portal:auth:user-sessions:*` SET 执行 ZSET 命令：旧 session/refresh 仍可使用，旧 Refresh 轮换后自动进入 v2 索引；用户认证状态变化则由数据库 `auth_version` 的逐请求与刷新校验兜底，避免旧索引未清理导致权限复活。该 Lua 协议仍限定单节点 Redis。
+用户会话索引使用版本化 Redis ZSET 键 `saas:portal:auth:v2:user-sessions:{tenantId}:{userId}`，成员过期时间决定索引的绝对 TTL。Lua 使用 Redis `TIME` 计算当前毫秒，Java 仅传相对 Refresh TTL，避免应用节点时钟漂移。滚动升级不会对旧 `saas:portal:auth:user-sessions:*` SET 执行 ZSET 命令：旧 session/refresh 仍可使用，旧 Refresh 轮换后自动进入 v2 索引；用户认证状态变化则由数据库 `auth_version` 的逐请求与刷新校验兜底，避免旧索引未清理导致权限复活。该 Lua 协议仍限定单节点 Redis。
 
 ## 认证与授权
 

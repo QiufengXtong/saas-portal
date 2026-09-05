@@ -17,10 +17,12 @@ import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.script.RedisScript;
 import tools.jackson.databind.ObjectMapper;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -30,7 +32,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -80,7 +81,7 @@ class RedisSessionStoreTest {
                         "saas:portal:auth:session:s1",
                         "saas:portal:auth:refresh:" + refreshTokenHash,
                         "saas:portal:auth:v2:user-sessions:1:2")),
-                serialized.capture(), eq("s1"), eq(TTL_MILLIS), anyString(), anyString());
+                serialized.capture(), eq("s1"), eq(TTL_MILLIS));
         @SuppressWarnings("unchecked")
         Map<String, Object> stored = objectMapper.readValue(serialized.getValue(), Map.class);
         assertThat(stored)
@@ -89,7 +90,8 @@ class RedisSessionStoreTest {
                 .containsEntry("refreshTokenHash", refreshTokenHash);
         assertThat(serialized.getValue()).doesNotContain(rawRefreshToken);
         assertThat(script.getValue().getScriptAsString())
-                .contains("EXISTS", "SET", "ZREMRANGEBYSCORE", "ZADD", "ZREVRANGE", "PEXPIREAT");
+                .contains("redis.call('TIME')", "EXISTS", "SET", "ZREMRANGEBYSCORE", "ZADD",
+                        "nowMillis + tonumber(ARGV[3])", "ZREVRANGE", "PEXPIREAT");
         verify(redisTemplate, never()).delete(any(String.class));
     }
 
@@ -106,13 +108,13 @@ class RedisSessionStoreTest {
                         "saas:portal:auth:session:s1",
                         "saas:portal:auth:refresh:first-hash",
                         "saas:portal:auth:v2:user-sessions:1:2")),
-                any(), eq("s1"), eq(TTL_MILLIS), anyString(), anyString());
+                any(), eq("s1"), eq(TTL_MILLIS));
         verify(redisTemplate).execute(any(RedisScript.class),
                 eq(List.of(
                         "saas:portal:auth:session:s2",
                         "saas:portal:auth:refresh:second-hash",
                         "saas:portal:auth:v2:user-sessions:1:2")),
-                any(), eq("s2"), eq(TTL_MILLIS), anyString(), anyString());
+                any(), eq("s2"), eq(TTL_MILLIS));
     }
 
     @Test
@@ -140,8 +142,21 @@ class RedisSessionStoreTest {
         ArgumentCaptor<RedisScript<Long>> script = redisScriptCaptor();
         verify(redisTemplate).execute(script.capture(), anyList(), any(Object[].class));
         assertThat(script.getValue().getScriptAsString())
-                .contains("ZREVRANGE', KEYS[3], 0, 0, 'WITHSCORES'", "PEXPIREAT', KEYS[3], latest[2]")
+                .contains("redis.call('TIME')", "ZREVRANGE', KEYS[3], 0, 0, 'WITHSCORES'",
+                        "PEXPIREAT', KEYS[3], latest[2]")
                 .doesNotContain("PEXPIRE', KEYS[3]");
+    }
+
+    @Test
+    void shouldNotDependOnJvmClockForRedisIndexTime() throws Exception {
+        byte[] bytecode;
+        try (var classFile = Objects.requireNonNull(
+                RedisSessionStore.class.getResourceAsStream("RedisSessionStore.class"))) {
+            bytecode = classFile.readAllBytes();
+        }
+
+        assertThat(new String(bytecode, StandardCharsets.ISO_8859_1))
+                .doesNotContain("currentTimeMillis", "java/time/Clock");
     }
 
     @Test
@@ -222,10 +237,11 @@ class RedisSessionStoreTest {
                         "saas:portal:auth:refresh:new-hash")),
                 eq("saas:portal:auth:session:"),
                 eq("saas:portal:auth:v2:user-sessions:"),
-                eq("old-hash"), eq("new-hash"), eq(TTL_MILLIS), anyString(), anyString());
+                eq("old-hash"), eq("new-hash"), eq(TTL_MILLIS));
         assertThat(scripts.getValue().getScriptAsString())
-                .contains("GET", "EXISTS", "redis.call('DEL', KEYS[1])", "ZREMRANGEBYSCORE",
-                        "ZADD", "ZREVRANGE", "PEXPIREAT");
+                .contains("redis.call('TIME')", "GET", "EXISTS", "redis.call('DEL', KEYS[1])",
+                        "ZREMRANGEBYSCORE", "ZADD", "nowMillis + tonumber(ARGV[5])",
+                        "ZREVRANGE", "PEXPIREAT");
         verify(redisTemplate, never()).delete("saas:portal:auth:refresh:old-hash");
     }
 
@@ -242,7 +258,7 @@ class RedisSessionStoreTest {
         order.verify(redisTemplate).execute(
                 any(RedisScript.class),
                 eq(List.of("saas:portal:auth:session:s1")),
-                eq("saas:portal:auth:refresh:"), eq("saas:portal:auth:v2:user-sessions:"), anyString());
+                eq("saas:portal:auth:refresh:"), eq("saas:portal:auth:v2:user-sessions:"));
         order.verify(redisTemplate).execute(
                 any(RedisScript.class),
                 eq(List.of(
@@ -263,9 +279,10 @@ class RedisSessionStoreTest {
         verify(redisTemplate).execute(
                 script.capture(),
                 eq(List.of("saas:portal:auth:session:s1")),
-                eq("saas:portal:auth:refresh:"), eq("saas:portal:auth:v2:user-sessions:"), anyString());
+                eq("saas:portal:auth:refresh:"), eq("saas:portal:auth:v2:user-sessions:"));
         assertThat(script.getValue().getScriptAsString())
-                .contains("GET", "DEL", "ZREMRANGEBYSCORE", "ZREM", "ZREVRANGE", "PEXPIREAT");
+                .contains("redis.call('TIME')", "GET", "DEL", "ZREMRANGEBYSCORE", "ZREM",
+                        "ZREVRANGE", "PEXPIREAT");
         verify(redisTemplate, never()).delete(any(String.class));
     }
 
@@ -280,9 +297,9 @@ class RedisSessionStoreTest {
         verify(redisTemplate).execute(
                 script.capture(),
                 eq(List.of("saas:portal:auth:v2:user-sessions:1:2")),
-                eq("saas:portal:auth:session:"), eq("saas:portal:auth:refresh:"), anyString());
+                eq("saas:portal:auth:session:"), eq("saas:portal:auth:refresh:"));
         assertThat(script.getValue().getScriptAsString())
-                .contains("ZREMRANGEBYSCORE", "ZRANGE", "GET", "DEL");
+                .contains("redis.call('TIME')", "ZREMRANGEBYSCORE", "ZRANGE", "GET", "DEL");
         verify(redisTemplate, never()).delete(any(String.class));
     }
 

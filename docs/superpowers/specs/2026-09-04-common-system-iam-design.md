@@ -197,9 +197,11 @@ MyBatis-Plus 租户拦截器自动为租户表追加 `tenant_id` 条件。`sys_t
 ```text
 V1__init_system_schema.sql
 V2__init_system_permissions.sql
+V3__add_bootstrap_lock.sql
+V4__add_auth_version_and_role_lookup_index.sql
 ```
 
-V1 创建系统表、索引和约束；V2 初始化全局菜单、按钮和权限码，不写入默认密码。
+V1 创建系统表、索引和约束；V2 初始化全局菜单、按钮和权限码，不写入默认密码；V3 创建多实例首次初始化锁；V4 增加用户认证安全版本 `auth_version` 和 `idx_user_role_role(tenant_id, role_id, user_id)` 角色反向查询索引。
 
 首次启动初始化器在 Flyway 完成后执行：
 
@@ -255,7 +257,7 @@ saas:portal:auth:login-failure:{tenantCode}:{username}
 
 Access Token 校验通过后，还必须确认 Redis 会话存在，并从会话加载当前权限集合；随后在租户上下文中校验数据库用户启用、未删除且 `auth_version` 与会话一致。Refresh 先只读定位会话，取得租户行锁并完成相同状态/版本校验后，才用 Lua 原子轮换摘要。注销、用户禁用、密码重置或角色权限变化时删除对应会话；即使 Redis 清理失败，事务内递增的 `auth_version` 仍会使旧 Access/Refresh Token 失效。
 
-用户会话索引为 ZSET，成员是 sessionId、score 是绝对过期 epoch millis。每个 Lua 操作先裁剪过期成员，并以清理后最大 score 设置 `PEXPIREAT`，避免缩短新配置 TTL 时提前删除仍有效的旧成员。滚动升级不读取或改写旧 `saas:portal:auth:user-sessions:*` SET；旧 session/refresh 仍可校验，旧会话缺失的安全版本按 `0` 兼容，旧 Refresh 轮换成功后进入 v2 索引。
+用户会话索引为 ZSET，成员是 sessionId、score 是绝对过期 epoch millis。Lua 通过 Redis `TIME` 的秒和微秒计算当前毫秒，Java 只传相对 Refresh TTL，避免应用节点时钟漂移；当前 epoch 毫秒处于 Lua 双精度整数安全范围。每个 Lua 操作先裁剪过期成员，并以清理后最大 score 设置 `PEXPIREAT`，避免缩短新配置 TTL 时提前删除仍有效的旧成员。滚动升级不读取或改写旧 `saas:portal:auth:user-sessions:*` SET；旧 session/refresh 仍可校验，旧会话缺失的安全版本按 `0` 兼容，旧 Refresh 轮换成功后进入 v2 索引。
 
 登录连续失败默认达到 5 次后锁定 15 分钟，失败统计窗口为 15 分钟。成功登录后清除失败状态。
 
