@@ -11,7 +11,15 @@ public record AuthSession(
         String username,
         String displayName,
         Set<String> permissions,
+        long authVersion,
         String refreshTokenHash) {
+
+    /** 为既有调用方提供认证版本零的兼容构造入口。 */
+    public AuthSession(
+            String sessionId, long tenantId, long userId, String username, String displayName,
+            Set<String> permissions, String refreshTokenHash) {
+        this(sessionId, tenantId, userId, username, displayName, permissions, 0L, refreshTokenHash);
+    }
 
     /** 固化会话字段和权限快照，避免存储内容被调用方后续修改。 */
     public AuthSession {

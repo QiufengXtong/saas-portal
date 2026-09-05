@@ -26,6 +26,7 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /** 验证 Redis Lua 登录失败计数、无歧义键、统计窗口和锁定期限。 */
@@ -54,7 +55,7 @@ class RedisLoginFailureServiceTest {
         doReturn(1L).when(redisTemplate)
                 .execute(any(RedisScript.class), anyList(), any(Object[].class));
 
-        service.recordFailure(" Default ", " ADMIN ");
+        service.recordFailure("default", "admin");
 
         ArgumentCaptor<RedisScript<Long>> script = redisScriptCaptor();
         verify(redisTemplate).execute(
@@ -130,21 +131,12 @@ class RedisLoginFailureServiceTest {
     }
 
     @Test
-    void shouldUseUnambiguousLengthPrefixedNormalizedIdentityComponents() {
-        doReturn(1L).when(redisTemplate)
-                .execute(any(RedisScript.class), anyList(), any(Object[].class));
-
-        service.recordFailure("a:b", "c");
-        service.recordFailure("a", "b:c");
-
-        verify(redisTemplate).execute(
-                any(RedisScript.class),
-                eq(List.of("saas:portal:auth:login-failure:3:a:b:1:c")),
-                any(Object[].class));
-        verify(redisTemplate).execute(
-                any(RedisScript.class),
-                eq(List.of("saas:portal:auth:login-failure:1:a:3:b:c")),
-                any(Object[].class));
+    void shouldRejectInvalidOrNonNormalizedIdentityBeforeRedisAccess() {
+        assertThatThrownBy(() -> service.recordFailure("a:b", "admin"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.recordFailure("DEFAULT", "admin"))
+                .isInstanceOf(IllegalArgumentException.class);
+        verifyNoInteractions(redisTemplate);
     }
 
     @Test
@@ -152,7 +144,7 @@ class RedisLoginFailureServiceTest {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.get(NORMALIZED_KEY)).thenReturn("3");
 
-        assertThatThrownBy(() -> service.assertAllowed("DEFAULT", "Admin"))
+        assertThatThrownBy(() -> service.assertAllowed("default", "admin"))
                 .isInstanceOf(BusinessException.class)
                 .extracting(exception -> ((BusinessException) exception).getErrorCode())
                 .isEqualTo(AuthErrorCode.LOGIN_LOCKED);
@@ -168,7 +160,7 @@ class RedisLoginFailureServiceTest {
 
     @Test
     void shouldClearNormalizedFailureStateAfterSuccessfulLogin() {
-        service.clear(" Default ", " ADMIN ");
+        service.clear("default", "admin");
 
         verify(redisTemplate).delete(NORMALIZED_KEY);
     }

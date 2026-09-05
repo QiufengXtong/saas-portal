@@ -30,6 +30,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -79,7 +80,7 @@ class RedisSessionStoreTest {
                         "saas:portal:auth:session:s1",
                         "saas:portal:auth:refresh:" + refreshTokenHash,
                         "saas:portal:auth:user-sessions:1:2")),
-                serialized.capture(), eq("s1"), eq(TTL_MILLIS));
+                serialized.capture(), eq("s1"), eq(TTL_MILLIS), anyString(), anyString());
         @SuppressWarnings("unchecked")
         Map<String, Object> stored = objectMapper.readValue(serialized.getValue(), Map.class);
         assertThat(stored)
@@ -88,7 +89,7 @@ class RedisSessionStoreTest {
                 .containsEntry("refreshTokenHash", refreshTokenHash);
         assertThat(serialized.getValue()).doesNotContain(rawRefreshToken);
         assertThat(script.getValue().getScriptAsString())
-                .contains("EXISTS", "SET", "SADD", "PEXPIRE");
+                .contains("EXISTS", "SET", "ZREMRANGEBYSCORE", "ZADD", "PEXPIRE");
         verify(redisTemplate, never()).delete(any(String.class));
     }
 
@@ -105,13 +106,13 @@ class RedisSessionStoreTest {
                         "saas:portal:auth:session:s1",
                         "saas:portal:auth:refresh:first-hash",
                         "saas:portal:auth:user-sessions:1:2")),
-                any(), eq("s1"), eq(TTL_MILLIS));
+                any(), eq("s1"), eq(TTL_MILLIS), anyString(), anyString());
         verify(redisTemplate).execute(any(RedisScript.class),
                 eq(List.of(
                         "saas:portal:auth:session:s2",
                         "saas:portal:auth:refresh:second-hash",
                         "saas:portal:auth:user-sessions:1:2")),
-                any(), eq("s2"), eq(TTL_MILLIS));
+                any(), eq("s2"), eq(TTL_MILLIS), anyString(), anyString());
     }
 
     @Test
@@ -192,9 +193,9 @@ class RedisSessionStoreTest {
                         "saas:portal:auth:refresh:new-hash")),
                 eq("saas:portal:auth:session:"),
                 eq("saas:portal:auth:user-sessions:"),
-                eq("old-hash"), eq("new-hash"), eq(TTL_MILLIS));
+                eq("old-hash"), eq("new-hash"), eq(TTL_MILLIS), anyString(), anyString());
         assertThat(scripts.getValue().getScriptAsString())
-                .contains("GET", "EXISTS", "redis.call('DEL', KEYS[1])", "SADD", "PEXPIRE");
+                .contains("GET", "EXISTS", "redis.call('DEL', KEYS[1])", "ZREMRANGEBYSCORE", "ZADD", "PEXPIRE");
         verify(redisTemplate, never()).delete("saas:portal:auth:refresh:old-hash");
     }
 
@@ -211,7 +212,7 @@ class RedisSessionStoreTest {
         order.verify(redisTemplate).execute(
                 any(RedisScript.class),
                 eq(List.of("saas:portal:auth:session:s1")),
-                eq("saas:portal:auth:refresh:"), eq("saas:portal:auth:user-sessions:"));
+                eq("saas:portal:auth:refresh:"), eq("saas:portal:auth:user-sessions:"), anyString());
         order.verify(redisTemplate).execute(
                 any(RedisScript.class),
                 eq(List.of(
@@ -232,9 +233,9 @@ class RedisSessionStoreTest {
         verify(redisTemplate).execute(
                 script.capture(),
                 eq(List.of("saas:portal:auth:session:s1")),
-                eq("saas:portal:auth:refresh:"), eq("saas:portal:auth:user-sessions:"));
+                eq("saas:portal:auth:refresh:"), eq("saas:portal:auth:user-sessions:"), anyString());
         assertThat(script.getValue().getScriptAsString())
-                .contains("GET", "DEL", "SREM", "SCARD");
+                .contains("GET", "DEL", "ZREMRANGEBYSCORE", "ZREM", "ZCARD");
         verify(redisTemplate, never()).delete(any(String.class));
     }
 
@@ -249,9 +250,9 @@ class RedisSessionStoreTest {
         verify(redisTemplate).execute(
                 script.capture(),
                 eq(List.of("saas:portal:auth:user-sessions:1:2")),
-                eq("saas:portal:auth:session:"), eq("saas:portal:auth:refresh:"));
+                eq("saas:portal:auth:session:"), eq("saas:portal:auth:refresh:"), anyString());
         assertThat(script.getValue().getScriptAsString())
-                .contains("SMEMBERS", "GET", "DEL");
+                .contains("ZREMRANGEBYSCORE", "ZRANGE", "GET", "DEL");
         verify(redisTemplate, never()).delete(any(String.class));
     }
 

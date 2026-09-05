@@ -7,6 +7,8 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Mapper;
 
 import java.util.Set;
+import java.time.LocalDateTime;
+import org.apache.ibatis.annotations.Update;
 
 /** 提供租户角色的 MyBatis-Plus 数据访问入口。 */
 @Mapper
@@ -85,4 +87,15 @@ public interface SystemRoleMapper extends BaseMapper<SystemRole> {
               AND r.role_code = 'TENANT_ADMIN'
             """)
     long countEnabledTenantAdminUsers(@Param("tenantId") long tenantId);
+
+    @Update("""
+            UPDATE sys_role
+            SET deleted = 1, updated_by = #{auditorId}, updated_at = #{updatedAt}
+            WHERE tenant_id = #{tenantId} AND id = #{roleId} AND deleted = 0
+            """)
+    int logicalDeleteWithAudit(
+            @Param("tenantId") long tenantId,
+            @Param("roleId") long roleId,
+            @Param("auditorId") long auditorId,
+            @Param("updatedAt") LocalDateTime updatedAt);
 }

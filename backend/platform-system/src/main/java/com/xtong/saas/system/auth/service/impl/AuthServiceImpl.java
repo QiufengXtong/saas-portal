@@ -25,8 +25,12 @@ import com.xtong.saas.system.tenant.service.TenantService;
 import com.xtong.saas.system.user.entity.SystemUser;
 import com.xtong.saas.system.user.exception.UserErrorCode;
 import com.xtong.saas.system.user.service.UserService;
+import com.xtong.saas.system.identity.IdentityNormalizer;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.nio.charset.StandardCharsets;
@@ -81,39 +85,71 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public TokenResponse login(LoginRequest request) {
         Objects.requireNonNull(request, "request must not be null");
-        String tenantCode = request.tenantCode();
-        String username = request.username();
+        String tenantCode = IdentityNormalizer.normalizeForLogin(request.tenantCode())
+                .orElseThrow(() -> new BusinessException(AuthErrorCode.INVALID_CREDENTIALS));
+        String username = IdentityNormalizer.normalizeForLogin(request.username())
+                .orElseThrow(() -> new BusinessException(AuthErrorCode.INVALID_CREDENTIALS));
         loginFailureService.assertAllowed(tenantCode, username);
         if (!isBcryptPasswordLength(request.password())) {
             throw invalidCredentials(tenantCode, username);
         }
         SystemTenant tenant = requireLoginTenant(tenantCode, username, request.password());
-        SystemUser user = requireLoginUser(tenant.getId(), tenantCode, username, request.password());
-        if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
-            throw invalidCredentials(tenantCode, username);
-        }
-        Set<String> permissions = permissionService.loadUserPermissions(tenant.getId(), user.getId());
-        CreatedSession created = createUniqueSession(tenant.getId(), user, permissions);
-        AuthenticatedUser principal = toPrincipal(created.session());
-        String accessToken = accessTokenService.issue(principal);
-        TenantScope.run(tenant.getId(), () -> userService.recordLoginSuccess(user.getId(), LocalDateTime.now()));
+        tenantService.lockAndRequireEnabled(tenant.getId(), tenantCode);
+        CreatedSession created = TenantScope.call(tenant.getId(), () -> {
+            SystemUser user = requireLoginUser(tenant.getId(), tenantCode, username, request.password());
+            if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+                throw invalidCredentials(tenantCode, username);
+            }
+            Set<String> permissions = permissionService.loadUserPermissions(tenant.getId(), user.getId());
+            CreatedSession result = createUniqueSession(tenant.getId(), user, permissions);
+            registerRollbackCompensation(result.session().sessionId());
+            userService.recordLoginSuccess(user.getId(), LocalDateTime.now());
+            return result;
+        });
+        String accessToken = accessTokenService.issue(toPrincipal(created.session()));
         loginFailureService.clear(tenantCode, username);
         return tokenResponse(accessToken, created.refreshToken());
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public TokenResponse refresh(RefreshTokenRequest request) {
         Objects.requireNonNull(request, "request must not be null");
         String currentHash = tokenHashService.hash(request.refreshToken());
-        String newRefreshToken = refreshTokenGenerator.generate();
-        String newHash = tokenHashService.hash(newRefreshToken);
-        AuthSession rotated = sessionStore.rotateRefreshToken(
-                        currentHash, newHash, authProperties.refreshTokenTtl())
+        AuthSession current = sessionStore.peekRefreshSession(currentHash)
                 .orElseThrow(() -> new BusinessException(AuthErrorCode.INVALID_REFRESH_TOKEN));
-        String accessToken = accessTokenService.issue(toPrincipal(rotated));
-        return tokenResponse(accessToken, newRefreshToken);
+        try {
+            tenantService.lockAndRequireEnabled(current.tenantId());
+        } catch (BusinessException exception) {
+            sessionStore.delete(current.sessionId());
+            throw new BusinessException(AuthErrorCode.INVALID_REFRESH_TOKEN);
+        }
+        RotatedRefresh rotated = TenantScope.call(current.tenantId(), () -> {
+            SystemUser user;
+            try {
+                user = userService.requireEnabledForSession(current.tenantId(), current.userId());
+            } catch (BusinessException exception) {
+                sessionStore.delete(current.sessionId());
+                throw new BusinessException(AuthErrorCode.INVALID_REFRESH_TOKEN);
+            }
+            long currentVersion = user.getAuthVersion() == null ? 0L : user.getAuthVersion();
+            if (currentVersion != current.authVersion()) {
+                sessionStore.delete(current.sessionId());
+                throw new BusinessException(AuthErrorCode.INVALID_REFRESH_TOKEN);
+            }
+            String newRefreshToken = refreshTokenGenerator.generate();
+            String newHash = tokenHashService.hash(newRefreshToken);
+            AuthSession result = sessionStore.rotateRefreshToken(
+                            currentHash, newHash, authProperties.refreshTokenTtl())
+                    .orElseThrow(() -> new BusinessException(AuthErrorCode.INVALID_REFRESH_TOKEN));
+            registerRollbackCompensation(result.sessionId());
+            return new RotatedRefresh(result, newRefreshToken);
+        });
+        String accessToken = accessTokenService.issue(toPrincipal(rotated.session()));
+        return tokenResponse(accessToken, rotated.refreshToken());
     }
 
     @Override
@@ -174,6 +210,7 @@ public class AuthServiceImpl implements AuthService {
                     user.getUsername(),
                     user.getDisplayName(),
                     permissions,
+                    user.getAuthVersion() == null ? 0L : user.getAuthVersion(),
                     refreshHash);
             if (sessionStore.create(session, refreshHash, authProperties.refreshTokenTtl())) {
                 return new CreatedSession(session, refreshToken);
@@ -221,7 +258,25 @@ public class AuthServiceImpl implements AuthService {
                 && session.username().equals(principal.username());
     }
 
+    private void registerRollbackCompensation(String sessionId) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                if (status != TransactionSynchronization.STATUS_COMMITTED) {
+                    sessionStore.delete(sessionId);
+                }
+            }
+        });
+    }
+
     /** 将已原子落库的会话与仅返回调用方的 Refresh Token 成对携带。 */
     private record CreatedSession(AuthSession session, String refreshToken) {
+    }
+
+    /** 将已轮换会话与仅返回调用方的新 Refresh Token 配对，避免明文进入会话模型。 */
+    private record RotatedRefresh(AuthSession session, String refreshToken) {
     }
 }

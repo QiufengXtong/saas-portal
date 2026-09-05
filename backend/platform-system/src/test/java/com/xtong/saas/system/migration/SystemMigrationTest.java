@@ -53,7 +53,7 @@ class SystemMigrationTest {
                 .locations("classpath:db/migration")
                 .load();
 
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(3);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(4);
 
         try (Connection connection = dataSource.getConnection()) {
             assertThat(queryForInt(connection,
@@ -65,6 +65,10 @@ class SystemMigrationTest {
                     .containsExactlyInAnyOrderElementsOf(EXPECTED_PERMISSIONS);
             assertThat(queryForInt(connection, "select count(*) from sys_tenant")).isZero();
             assertThat(queryForInt(connection, "select count(*) from sys_user")).isZero();
+            assertThat(queryForInt(connection,
+                    "select count(*) from information_schema.columns where table_schema = 'public' "
+                            + "and table_name = 'sys_user' and column_name = 'auth_version'"))
+                    .isEqualTo(1);
         }
     }
 
@@ -92,6 +96,35 @@ class SystemMigrationTest {
             first.commit();
             assertThat(secondLock.get(1, TimeUnit.SECONDS)).isEqualTo(1);
             second.commit();
+        }
+    }
+
+    @Test
+    void shouldSerializeAuthenticationAndManagementOnSameTenantRow() throws Exception {
+        DataSource dataSource = migrationDataSource("tenant_auth_lock");
+        Flyway.configure().dataSource(dataSource).locations("classpath:db/migration").load().migrate();
+        try (Connection setup = dataSource.getConnection(); Statement statement = setup.createStatement()) {
+            statement.executeUpdate("insert into sys_tenant (id, tenant_code, tenant_name) values (1, 'acme', 'Acme')");
+        }
+
+        try (Connection login = dataSource.getConnection();
+             Connection management = dataSource.getConnection();
+             ExecutorService executor = Executors.newSingleThreadExecutor()) {
+            login.setAutoCommit(false);
+            management.setAutoCommit(false);
+            assertThat(queryForInt(login, "select id from sys_tenant where id = 1 for update")).isEqualTo(1);
+            CountDownLatch attempting = new CountDownLatch(1);
+            Future<Integer> managementLock = executor.submit(() -> {
+                attempting.countDown();
+                return queryForInt(management, "select id from sys_tenant where id = 1 for update");
+            });
+
+            assertThat(attempting.await(1, TimeUnit.SECONDS)).isTrue();
+            Thread.sleep(100L);
+            assertThat(managementLock.isDone()).isFalse();
+            login.commit();
+            assertThat(managementLock.get(1, TimeUnit.SECONDS)).isEqualTo(1);
+            management.commit();
         }
     }
 
@@ -130,6 +163,7 @@ class SystemMigrationTest {
                     "select index_name from information_schema.indexes where index_schema = 'public'"))
                     .contains(
                             "idx_sys_user_tenant_status",
+                            "idx_user_role_role",
                             "idx_sys_role_tenant_status",
                             "idx_sys_menu_parent_sort");
         }

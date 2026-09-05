@@ -34,5 +34,7 @@ public interface UserService {
 
     SystemUser requireEnabledForLogin(long tenantId, String username);
 
+    SystemUser requireEnabledForSession(long tenantId, long userId);
+
     void recordLoginSuccess(long userId, LocalDateTime loginAt);
 }

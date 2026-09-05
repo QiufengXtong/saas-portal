@@ -3,13 +3,13 @@ package com.xtong.saas.system.auth.session;
 import com.xtong.saas.common.exception.BusinessException;
 import com.xtong.saas.system.auth.config.AuthProperties;
 import com.xtong.saas.system.auth.exception.AuthErrorCode;
+import com.xtong.saas.system.identity.IdentityNormalizer;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.List;
-import java.util.Locale;
 
 /** 使用 Redis Lua 原子维护无歧义身份键的登录失败窗口及锁定期限。 */
 @Service
@@ -76,8 +76,8 @@ public class RedisLoginFailureService implements LoginFailureService {
     }
 
     private static String key(String tenantCode, String username) {
-        String normalizedTenant = normalize(tenantCode);
-        String normalizedUsername = normalize(username);
+        String normalizedTenant = requireNormalized(tenantCode);
+        String normalizedUsername = requireNormalized(username);
         return LOGIN_FAILURE_KEY_PREFIX
                 + component(normalizedTenant)
                 + ":"
@@ -104,7 +104,12 @@ public class RedisLoginFailureService implements LoginFailureService {
         return Long.toString(milliseconds);
     }
 
-    private static String normalize(String value) {
-        return value.strip().toLowerCase(Locale.ROOT);
+    private static String requireNormalized(String value) {
+        String normalized = IdentityNormalizer.normalizeForLogin(value)
+                .orElseThrow(() -> new IllegalArgumentException("identity must be valid normalized ASCII"));
+        if (!normalized.equals(value)) {
+            throw new IllegalArgumentException("identity must already be normalized");
+        }
+        return normalized;
     }
 }

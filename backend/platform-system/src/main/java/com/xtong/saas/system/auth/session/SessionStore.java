@@ -13,6 +13,9 @@ public interface SessionStore {
 
     Optional<AuthSession> find(String sessionId);
 
+    /** 只读解析 Refresh 摘要指向的当前会话，不消费令牌。 */
+    Optional<AuthSession> peekRefreshSession(String refreshTokenHash);
+
     /** 原子消费旧摘要并轮换为新摘要；旧摘要无效、会话已撤销或新摘要碰撞时返回空。 */
     Optional<AuthSession> rotateRefreshToken(
             String currentRefreshTokenHash,

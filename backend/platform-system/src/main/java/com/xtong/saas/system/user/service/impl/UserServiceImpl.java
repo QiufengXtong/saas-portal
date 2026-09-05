@@ -3,9 +3,9 @@ package com.xtong.saas.system.user.service.impl;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.xtong.saas.common.exception.BusinessException;
+import com.xtong.saas.common.mybatis.AuditorProvider;
 import com.xtong.saas.common.result.PageResult;
 import com.xtong.saas.system.auth.api.SessionRevocationService;
-import com.xtong.saas.system.role.entity.SystemUserRole;
 import com.xtong.saas.system.role.mapper.SystemRoleMapper;
 import com.xtong.saas.system.role.mapper.SystemUserRoleMapper;
 import com.xtong.saas.system.tenant.context.TenantContextHolder;
@@ -21,12 +21,15 @@ import com.xtong.saas.system.user.exception.UserErrorCode;
 import com.xtong.saas.system.user.mapper.SystemUserMapper;
 import com.xtong.saas.system.user.service.UserService;
 import com.xtong.saas.system.user.vo.UserVO;
+import com.xtong.saas.system.identity.IdentityNormalizer;
 import org.springframework.stereotype.Service;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -36,12 +39,15 @@ import java.util.Set;
 @Service
 public class UserServiceImpl implements UserService {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(UserServiceImpl.class);
+
     private final SystemUserMapper userMapper;
     private final SystemRoleMapper roleMapper;
     private final SystemUserRoleMapper userRoleMapper;
     private final SystemTenantMapper tenantMapper;
     private final PasswordEncoder passwordEncoder;
     private final SessionRevocationService sessionRevocationService;
+    private final AuditorProvider auditorProvider;
 
     public UserServiceImpl(
             SystemUserMapper userMapper,
@@ -49,13 +55,15 @@ public class UserServiceImpl implements UserService {
             SystemUserRoleMapper userRoleMapper,
             SystemTenantMapper tenantMapper,
             PasswordEncoder passwordEncoder,
-            SessionRevocationService sessionRevocationService) {
+            SessionRevocationService sessionRevocationService,
+            AuditorProvider auditorProvider) {
         this.userMapper = userMapper;
         this.roleMapper = roleMapper;
         this.userRoleMapper = userRoleMapper;
         this.tenantMapper = tenantMapper;
         this.passwordEncoder = passwordEncoder;
         this.sessionRevocationService = sessionRevocationService;
+        this.auditorProvider = auditorProvider;
     }
 
     @Override
@@ -81,7 +89,8 @@ public class UserServiceImpl implements UserService {
     @Transactional
     public String create(CreateUserDTO command) {
         long tenantId = TenantContextHolder.requireTenantId();
-        if (userMapper.countByTenantAndUsernameIncludingDeleted(tenantId, command.username()) > 0) {
+        String username = IdentityNormalizer.requireManagement(command.username());
+        if (userMapper.countByTenantAndUsernameIncludingDeleted(tenantId, username) > 0) {
             throw new BusinessException(UserErrorCode.USERNAME_ALREADY_EXISTS);
         }
         if (command.roleIds() != null && !command.roleIds().isEmpty()) {
@@ -90,7 +99,7 @@ public class UserServiceImpl implements UserService {
         validateRoleIds(tenantId, command.roleIds());
         SystemUser user = new SystemUser();
         user.setTenantId(tenantId);
-        user.setUsername(command.username());
+        user.setUsername(username);
         user.setDisplayName(command.displayName());
         user.setPasswordHash(passwordEncoder.encode(command.password()));
         user.setEmail(command.email());
@@ -110,11 +119,26 @@ public class UserServiceImpl implements UserService {
     @Transactional
     public void update(long userId, UpdateUserDTO command) {
         long tenantId = TenantContextHolder.requireTenantId();
+        lockTenantForAdminInvariant(tenantId);
         SystemUser user = requireUser(tenantId, userId);
+        if (command.username() != null) {
+            String username = IdentityNormalizer.requireManagement(command.username());
+            if (!username.equals(user.getUsername())
+                    && userMapper.countByTenantAndUsernameIncludingDeleted(tenantId, username) > 0) {
+                throw new BusinessException(UserErrorCode.USERNAME_ALREADY_EXISTS);
+            }
+            user.setUsername(username);
+        }
         user.setDisplayName(command.displayName());
         user.setEmail(command.email());
         user.setMobile(command.mobile());
-        userMapper.updateById(user);
+        try {
+            userMapper.updateById(user);
+        } catch (DuplicateKeyException exception) {
+            throw new BusinessException(UserErrorCode.USERNAME_ALREADY_EXISTS);
+        }
+        userMapper.incrementAuthVersion(tenantId, userId);
+        revokeAfterCommit(tenantId, userId);
     }
 
     @Override
@@ -137,6 +161,7 @@ public class UserServiceImpl implements UserService {
         if (user.getStatus() != UserStatus.DISABLED) {
             user.setStatus(UserStatus.DISABLED);
             userMapper.updateById(user);
+            userMapper.incrementAuthVersion(tenantId, userId);
             revokeAfterCommit(tenantId, userId);
         }
     }
@@ -145,10 +170,12 @@ public class UserServiceImpl implements UserService {
     @Transactional
     public void resetPassword(long userId, ResetPasswordDTO command) {
         long tenantId = TenantContextHolder.requireTenantId();
+        lockTenantForAdminInvariant(tenantId);
         SystemUser user = requireUser(tenantId, userId);
         user.setPasswordHash(passwordEncoder.encode(command.password()));
         user.setPasswordChangedAt(LocalDateTime.now());
         userMapper.updateById(user);
+        userMapper.incrementAuthVersion(tenantId, userId);
         revokeAfterCommit(tenantId, userId);
     }
 
@@ -162,7 +189,7 @@ public class UserServiceImpl implements UserService {
         lockTenantForAdminInvariant(tenantId);
         SystemUser user = requireUser(tenantId, userId);
         assertNotLastEnabledTenantAdmin(tenantId, user);
-        userMapper.deleteById(userId);
+        userMapper.logicalDeleteWithAudit(tenantId, userId, currentAuditorId(), LocalDateTime.now());
         userRoleMapper.deleteByUser(tenantId, userId);
         revokeAfterCommit(tenantId, userId);
     }
@@ -175,7 +202,12 @@ public class UserServiceImpl implements UserService {
         validateRoleIds(tenantId, roleIds);
         SystemUser user = requireUser(tenantId, userId);
         assertRoleReplacementPreservesTenantAdmin(tenantId, user, roleIds);
+        Set<Long> currentRoleIds = Set.copyOf(userRoleMapper.selectRoleIdsByUserId(tenantId, userId));
+        if (currentRoleIds.equals(roleIds)) {
+            return;
+        }
         replaceRoles(tenantId, userId, roleIds);
+        userMapper.incrementAuthVersion(tenantId, userId);
         revokeAfterCommit(tenantId, userId);
     }
 
@@ -197,6 +229,15 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    public SystemUser requireEnabledForSession(long tenantId, long userId) {
+        SystemUser user = requireUser(tenantId, userId);
+        if (user.getStatus() != UserStatus.ENABLED) {
+            throw new BusinessException(UserErrorCode.USER_DISABLED);
+        }
+        return user;
+    }
+
+    @Override
     @Transactional
     public void recordLoginSuccess(long userId, LocalDateTime loginAt) {
         long tenantId = TenantContextHolder.requireTenantId();
@@ -206,10 +247,12 @@ public class UserServiceImpl implements UserService {
     }
 
     private void changeStatus(long tenantId, long userId, UserStatus status) {
+        lockTenantForAdminInvariant(tenantId);
         SystemUser user = requireUser(tenantId, userId);
         if (user.getStatus() != status) {
             user.setStatus(status);
             userMapper.updateById(user);
+            userMapper.incrementAuthVersion(tenantId, userId);
             revokeAfterCommit(tenantId, userId);
         }
     }
@@ -223,12 +266,8 @@ public class UserServiceImpl implements UserService {
 
     private void replaceRoles(long tenantId, long userId, Set<Long> roleIds) {
         userRoleMapper.deleteByUser(tenantId, userId);
-        for (Long roleId : roleIds) {
-            SystemUserRole relation = new SystemUserRole();
-            relation.setTenantId(tenantId);
-            relation.setUserId(userId);
-            relation.setRoleId(roleId);
-            userRoleMapper.insert(relation);
+        if (!roleIds.isEmpty()) {
+            userRoleMapper.insertBatch(tenantId, userId, roleIds, currentAuditorId(), LocalDateTime.now());
         }
     }
 
@@ -276,11 +315,25 @@ public class UserServiceImpl implements UserService {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    sessionRevocationService.revokeAllUserSessions(tenantId, userId);
+                    safelyRevoke(tenantId, userId);
                 }
             });
             return;
         }
-        sessionRevocationService.revokeAllUserSessions(tenantId, userId);
+        safelyRevoke(tenantId, userId);
+    }
+
+    private void safelyRevoke(long tenantId, long userId) {
+        try {
+            sessionRevocationService.revokeAllUserSessions(tenantId, userId);
+        } catch (RuntimeException exception) {
+            LOGGER.warn("会话清理失败，持久认证版本仍会阻止旧会话: tenantId={}, userId={}",
+                    tenantId, userId, exception);
+        }
+    }
+
+    private long currentAuditorId() {
+        return auditorProvider.currentAuditorId()
+                .orElseThrow(() -> new IllegalStateException("User management requires an authenticated auditor"));
     }
 }

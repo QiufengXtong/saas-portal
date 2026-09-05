@@ -4,6 +4,7 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import com.xtong.saas.system.identity.IdentityNormalizer;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Set;
@@ -16,6 +17,17 @@ public record CreateUserDTO(
         @Email @Size(max = 254) String email,
         @Size(max = 32) String mobile,
         @NotNull Set<@NotNull Long> roleIds) {
+
+    /** 在管理命令边界保存唯一的规范化用户名。 */
+    public CreateUserDTO {
+        username = IdentityNormalizer.normalizeForLogin(username).orElse(username);
+    }
+
+    /** 使非法 ASCII 身份通过 Bean Validation 返回统一参数错误。 */
+    @jakarta.validation.constraints.AssertTrue(message = "用户名格式不合法")
+    public boolean isUsernameValid() {
+        return IdentityNormalizer.normalizeForLogin(username).isPresent();
+    }
 
     /** 校验 BCrypt 输入不会超过其允许的 UTF-8 字节长度。 */
     @jakarta.validation.constraints.AssertTrue(message = "密码 UTF-8 长度不能超过72字节")

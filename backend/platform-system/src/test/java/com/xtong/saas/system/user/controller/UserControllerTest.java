@@ -9,6 +9,7 @@ import com.xtong.saas.system.auth.handler.RestAuthenticationEntryPoint;
 import com.xtong.saas.system.auth.model.AuthSession;
 import com.xtong.saas.system.auth.model.AuthenticatedUser;
 import com.xtong.saas.system.auth.session.SessionStore;
+import com.xtong.saas.system.auth.service.SessionPrincipalValidator;
 import com.xtong.saas.system.auth.token.AccessTokenService;
 import com.xtong.saas.system.menu.controller.MenuController;
 import com.xtong.saas.system.menu.service.MenuService;
@@ -92,10 +93,14 @@ class UserControllerTest {
     @MockitoBean
     private SessionStore sessionStore;
 
+    @MockitoBean
+    private SessionPrincipalValidator sessionPrincipalValidator;
+
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUpMockMvc() {
+        when(sessionPrincipalValidator.isValid(any())).thenReturn(true);
         mockMvc = MockMvcBuilders.webAppContextSetup(applicationContext)
                 .apply(springSecurity())
                 .build();

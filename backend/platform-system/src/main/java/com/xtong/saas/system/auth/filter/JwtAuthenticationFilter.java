@@ -5,6 +5,7 @@ import com.xtong.saas.system.auth.model.AuthSession;
 import com.xtong.saas.system.auth.model.AuthenticatedUser;
 import com.xtong.saas.system.auth.session.SessionStore;
 import com.xtong.saas.system.auth.token.AccessTokenService;
+import com.xtong.saas.system.auth.service.SessionPrincipalValidator;
 import com.xtong.saas.system.tenant.context.TenantContextHolder;
 import com.xtong.saas.system.tenant.context.TenantScope;
 import jakarta.servlet.FilterChain;
@@ -18,6 +19,7 @@ import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -33,14 +35,26 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final AccessTokenService accessTokenService;
     private final SessionStore sessionStore;
     private final RestAuthenticationEntryPoint authenticationEntryPoint;
+    private final SessionPrincipalValidator principalValidator;
 
+    @Autowired
     public JwtAuthenticationFilter(
             AccessTokenService accessTokenService,
             SessionStore sessionStore,
-            RestAuthenticationEntryPoint authenticationEntryPoint) {
+            RestAuthenticationEntryPoint authenticationEntryPoint,
+            SessionPrincipalValidator principalValidator) {
         this.accessTokenService = accessTokenService;
         this.sessionStore = sessionStore;
         this.authenticationEntryPoint = authenticationEntryPoint;
+        this.principalValidator = principalValidator;
+    }
+
+    /** 为不关注数据库状态的过滤器单元测试保留最小构造入口。 */
+    JwtAuthenticationFilter(
+            AccessTokenService accessTokenService,
+            SessionStore sessionStore,
+            RestAuthenticationEntryPoint authenticationEntryPoint) {
+        this(accessTokenService, sessionStore, authenticationEntryPoint, ignored -> true);
     }
 
     @Override
@@ -90,6 +104,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
+        if (!TenantScope.call(session.tenantId(), () -> principalValidator.isValid(session))) {
+            sessionStore.delete(session.sessionId());
+            unauthorized(request, response);
+            return;
+        }
         AuthenticatedUser principal = new AuthenticatedUser(
                 session.tenantId(),
                 session.userId(),

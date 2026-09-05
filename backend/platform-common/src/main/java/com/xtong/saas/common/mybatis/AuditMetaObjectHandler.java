@@ -36,8 +36,8 @@ public class AuditMetaObjectHandler implements MetaObjectHandler {
     @Override
     public void updateFill(MetaObject metaObject) {
         long auditorId = currentAuditorId();
-        fillStrategy(metaObject, "updatedBy", auditorId);
-        fillStrategy(metaObject, "updatedAt", LocalDateTime.now());
+        setFieldValByName("updatedBy", auditorId, metaObject);
+        setFieldValByName("updatedAt", LocalDateTime.now(), metaObject);
     }
 
     private long currentAuditorId() {

@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.StringJoiner;
+import java.time.LocalDateTime;
 
 /** 提供角色菜单物理关联的 MyBatis-Plus 数据访问入口。 */
 @Mapper
@@ -27,7 +28,18 @@ public interface SystemRoleMenuMapper extends BaseMapper<SystemRoleMenu> {
 
     @InsertProvider(type = RoleMenuSqlProvider.class, method = "insertBatch")
     int insertBatch(
-            @Param("tenantId") long tenantId, @Param("roleId") long roleId, @Param("menuIds") Set<Long> menuIds);
+            @Param("tenantId") long tenantId,
+            @Param("roleId") long roleId,
+            @Param("menuIds") Set<Long> menuIds,
+            @Param("auditorId") long auditorId,
+            @Param("createdAt") LocalDateTime createdAt);
+
+    @Select("""
+            SELECT menu_id FROM sys_role_menu
+            WHERE tenant_id = #{tenantId} AND role_id = #{roleId}
+            ORDER BY menu_id
+            """)
+    List<Long> selectMenuIdsByRole(@Param("tenantId") long tenantId, @Param("roleId") long roleId);
 
     @Select("""
             <script>
@@ -65,9 +77,11 @@ public interface SystemRoleMenuMapper extends BaseMapper<SystemRoleMenu> {
             Set<Long> menuIds = (Set<Long>) parameters.get("menuIds");
             StringJoiner values = new StringJoiner(",");
             for (Long menuId : menuIds) {
-                values.add("(" + IdWorker.getId() + ", #{tenantId}, #{roleId}, " + menuId + ")");
+                values.add("(" + IdWorker.getId()
+                        + ", #{tenantId}, #{roleId}, " + menuId + ", #{auditorId}, #{createdAt})");
             }
-            return "INSERT INTO sys_role_menu (id, tenant_id, role_id, menu_id) VALUES " + values;
+            return "INSERT INTO sys_role_menu "
+                    + "(id, tenant_id, role_id, menu_id, created_by, created_at) VALUES " + values;
         }
     }
 }

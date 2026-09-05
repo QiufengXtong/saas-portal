@@ -4,7 +4,7 @@ import com.xtong.saas.system.bootstrap.config.BootstrapProperties;
 import com.xtong.saas.system.bootstrap.exception.BootstrapConfigurationException;
 import com.xtong.saas.system.bootstrap.mapper.SystemBootstrapLockMapper;
 import com.xtong.saas.system.role.entity.SystemRole;
-import com.xtong.saas.system.role.entity.SystemUserRole;
+import com.xtong.saas.system.identity.IdentityNormalizer;
 import com.xtong.saas.system.role.enums.RoleStatus;
 import com.xtong.saas.system.role.mapper.SystemRoleMapper;
 import com.xtong.saas.system.role.mapper.SystemUserRoleMapper;
@@ -28,7 +28,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 /** 在空租户库中以单事务创建首租户、内置管理员角色、管理员及其关联。 */
 @Component
@@ -126,11 +125,7 @@ public class SystemBootstrapInitializer implements ApplicationRunner {
         userMapper.insert(user);
         requireAssignedId(user.getId(), "user");
 
-        SystemUserRole relation = new SystemUserRole();
-        relation.setTenantId(tenantId);
-        relation.setUserId(user.getId());
-        relation.setRoleId(role.getId());
-        userRoleMapper.insert(relation);
+        userRoleMapper.insertBatch(tenantId, user.getId(), java.util.Set.of(role.getId()), 0L, LocalDateTime.now());
     }
 
     private ValidBootstrapConfiguration validateConfiguration() {
@@ -144,9 +139,9 @@ public class SystemBootstrapInitializer implements ApplicationRunner {
                     "缺少或无效的首次初始化配置: " + String.join(", ", invalidProperties));
         }
         return new ValidBootstrapConfiguration(
-                normalizeIdentity(properties.tenantCode()),
+                requireIdentity(properties.tenantCode(), "saas.bootstrap.tenant-code"),
                 properties.tenantName().strip(),
-                normalizeIdentity(properties.adminUsername()),
+                requireIdentity(properties.adminUsername(), "saas.bootstrap.admin-username"),
                 properties.adminPassword());
     }
 
@@ -165,8 +160,12 @@ public class SystemBootstrapInitializer implements ApplicationRunner {
         }
     }
 
-    private static String normalizeIdentity(String value) {
-        return value.strip().toLowerCase(Locale.ROOT);
+    private static String requireIdentity(String value, String propertyName) {
+        try {
+            return IdentityNormalizer.requireManagement(value);
+        } catch (com.xtong.saas.common.exception.BusinessException exception) {
+            throw new BootstrapConfigurationException("缺少或无效的首次初始化配置: " + propertyName);
+        }
     }
 
     private static void requireAssignedId(Long id, String entityName) {

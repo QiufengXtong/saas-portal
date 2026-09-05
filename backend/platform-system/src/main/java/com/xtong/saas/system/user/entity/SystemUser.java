@@ -23,4 +23,5 @@ public class SystemUser extends BaseEntity {
     private UserStatus status;
     private LocalDateTime passwordChangedAt;
     private LocalDateTime lastLoginAt;
+    private Long authVersion;
 }

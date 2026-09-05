@@ -3,6 +3,7 @@ package com.xtong.saas.system.role.service.impl;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.xtong.saas.common.exception.BusinessException;
+import com.xtong.saas.common.mybatis.AuditorProvider;
 import com.xtong.saas.common.result.PageResult;
 import com.xtong.saas.system.auth.api.SessionRevocationService;
 import com.xtong.saas.system.menu.mapper.SystemMenuMapper;
@@ -19,6 +20,9 @@ import com.xtong.saas.system.role.service.RoleService;
 import com.xtong.saas.system.role.vo.RoleVO;
 import com.xtong.saas.system.tenant.context.TenantContextHolder;
 import com.xtong.saas.system.tenant.mapper.SystemTenantMapper;
+import com.xtong.saas.system.user.mapper.SystemUserMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,10 +32,13 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.time.LocalDateTime;
 
 /** 在受信租户上下文内维护角色及菜单关系，并在事务提交后撤销受影响用户会话。 */
 @Service
 public class RoleServiceImpl implements RoleService {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(RoleServiceImpl.class);
 
     private static final String TENANT_ADMIN_ROLE_CODE = "TENANT_ADMIN";
 
@@ -40,7 +47,9 @@ public class RoleServiceImpl implements RoleService {
     private final SystemRoleMenuMapper roleMenuMapper;
     private final SystemMenuMapper menuMapper;
     private final SystemTenantMapper tenantMapper;
+    private final SystemUserMapper userMapper;
     private final SessionRevocationService sessionRevocationService;
+    private final AuditorProvider auditorProvider;
 
     public RoleServiceImpl(
             SystemRoleMapper roleMapper,
@@ -48,13 +57,17 @@ public class RoleServiceImpl implements RoleService {
             SystemRoleMenuMapper roleMenuMapper,
             SystemMenuMapper menuMapper,
             SystemTenantMapper tenantMapper,
-            SessionRevocationService sessionRevocationService) {
+            SystemUserMapper userMapper,
+            SessionRevocationService sessionRevocationService,
+            AuditorProvider auditorProvider) {
         this.roleMapper = roleMapper;
         this.userRoleMapper = userRoleMapper;
         this.roleMenuMapper = roleMenuMapper;
         this.menuMapper = menuMapper;
         this.tenantMapper = tenantMapper;
+        this.userMapper = userMapper;
         this.sessionRevocationService = sessionRevocationService;
+        this.auditorProvider = auditorProvider;
     }
 
     @Override
@@ -130,7 +143,7 @@ public class RoleServiceImpl implements RoleService {
             throw new BusinessException(RoleErrorCode.ROLE_IN_USE);
         }
         roleMenuMapper.deleteByRole(tenantId, roleId);
-        roleMapper.deleteById(roleId);
+        roleMapper.logicalDeleteWithAudit(tenantId, roleId, currentAuditorId(), LocalDateTime.now());
     }
 
     @Override
@@ -141,11 +154,16 @@ public class RoleServiceImpl implements RoleService {
         SystemRole role = requireRole(tenantId, roleId);
         assertNotProtected(role);
         validateMenuIds(menuIds);
+        Set<Long> existingMenuIds = Set.copyOf(roleMenuMapper.selectMenuIdsByRole(tenantId, roleId));
+        if (existingMenuIds.equals(menuIds)) {
+            return;
+        }
         List<Long> userIds = userRoleMapper.selectUserIdsByRole(tenantId, roleId);
         roleMenuMapper.deleteByRole(tenantId, roleId);
         if (!menuIds.isEmpty()) {
-            roleMenuMapper.insertBatch(tenantId, roleId, menuIds);
+            roleMenuMapper.insertBatch(tenantId, roleId, menuIds, currentAuditorId(), LocalDateTime.now());
         }
+        incrementAffectedAuthVersions(tenantId, userIds);
         registerRevocationsAfterCommit(tenantId, userIds);
     }
 
@@ -156,9 +174,11 @@ public class RoleServiceImpl implements RoleService {
             assertNotProtected(role);
         }
         if (role.getStatus() != status) {
+            List<Long> userIds = userRoleMapper.selectUserIdsByRole(tenantId, roleId);
             role.setStatus(status);
             roleMapper.updateById(role);
-            revokeAffectedUsersAfterCommit(tenantId, roleId);
+            incrementAffectedAuthVersions(tenantId, userIds);
+            registerRevocationsAfterCommit(tenantId, userIds);
         }
     }
 
@@ -186,10 +206,6 @@ public class RoleServiceImpl implements RoleService {
         }
     }
 
-    private void revokeAffectedUsersAfterCommit(long tenantId, long roleId) {
-        registerRevocationsAfterCommit(tenantId, userRoleMapper.selectUserIdsByRole(tenantId, roleId));
-    }
-
     private void lockTenantForAdminInvariant(long tenantId) {
         tenantMapper.lockByIdForAdminInvariant(tenantId);
     }
@@ -200,11 +216,32 @@ public class RoleServiceImpl implements RoleService {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    distinctUserIds.forEach(userId -> sessionRevocationService.revokeAllUserSessions(tenantId, userId));
+                    distinctUserIds.forEach(userId -> safelyRevoke(tenantId, userId));
                 }
             });
             return;
         }
-        distinctUserIds.forEach(userId -> sessionRevocationService.revokeAllUserSessions(tenantId, userId));
+        distinctUserIds.forEach(userId -> safelyRevoke(tenantId, userId));
+    }
+
+    private void incrementAffectedAuthVersions(long tenantId, List<Long> userIds) {
+        List<Long> distinctUserIds = userIds.stream().distinct().toList();
+        if (!distinctUserIds.isEmpty()) {
+            userMapper.incrementAuthVersions(tenantId, distinctUserIds);
+        }
+    }
+
+    private void safelyRevoke(long tenantId, long userId) {
+        try {
+            sessionRevocationService.revokeAllUserSessions(tenantId, userId);
+        } catch (RuntimeException exception) {
+            LOGGER.warn("会话清理失败，持久认证版本仍会阻止旧会话: tenantId={}, userId={}",
+                    tenantId, userId, exception);
+        }
+    }
+
+    private long currentAuditorId() {
+        return auditorProvider.currentAuditorId()
+                .orElseThrow(() -> new IllegalStateException("Role management requires an authenticated auditor"));
     }
 }

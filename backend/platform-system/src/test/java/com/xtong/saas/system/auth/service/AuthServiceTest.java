@@ -33,6 +33,8 @@ import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Duration;
 import java.util.Optional;
@@ -123,6 +125,7 @@ class AuthServiceTest {
         InOrder order = inOrder(tenantService, loginFailureService, userService, passwordEncoder, permissionService);
         order.verify(loginFailureService).assertAllowed("default", "admin");
         order.verify(tenantService).requireEnabledByCode("default");
+        order.verify(tenantService).lockAndRequireEnabled(11L, "default");
         order.verify(userService).requireEnabledForLogin(11L, "admin");
         order.verify(passwordEncoder).matches(" Secret123 ", "encoded");
         order.verify(permissionService).loadUserPermissions(11L, 22L);
@@ -151,6 +154,24 @@ class AuthServiceTest {
         assertThat(response.refreshToken()).isEqualTo("refresh-2");
         verify(sessionStore).create(any(AuthSession.class), eq("hash-1"), eq(REFRESH_TTL));
         verify(sessionStore).create(any(AuthSession.class), eq("hash-2"), eq(REFRESH_TTL));
+    }
+
+    @Test
+    void shouldCompensateCreatedRedisSessionWhenLoginTransactionRollsBack() {
+        stubSuccessfulIdentity();
+        when(sessionIdGenerator.generate()).thenReturn("session-rollback");
+        when(refreshTokenGenerator.generate()).thenReturn("refresh-rollback");
+        when(tokenHashService.hash("refresh-rollback")).thenReturn("hash-rollback");
+        when(sessionStore.create(any(), eq("hash-rollback"), eq(REFRESH_TTL))).thenReturn(true);
+        when(accessTokenService.issue(any())).thenReturn("access");
+        TransactionSynchronizationManager.initSynchronization();
+
+        authService.login(new LoginRequest("default", "admin", "Secret123"));
+        TransactionSynchronizationManager.getSynchronizations().forEach(
+                synchronization -> synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+        TransactionSynchronizationManager.clearSynchronization();
+
+        verify(sessionStore).delete("session-rollback");
     }
 
     @Test
@@ -280,12 +301,54 @@ class AuthServiceTest {
     }
 
     @Test
+    void shouldRejectInvalidIdentityWithoutDatabaseOrFailureKeyAccess() {
+        assertThatThrownBy(() -> authService.login(new LoginRequest("acme:evil", "admín", "Secret123")))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(AuthErrorCode.INVALID_CREDENTIALS);
+
+        verifyNoInteractions(tenantService, userService, loginFailureService, sessionStore);
+    }
+
+    @Test
+    void loginAndRefreshShouldDeclareRealTransactionalBoundaries() throws Exception {
+        assertThat(AuthServiceImpl.class.getMethod("login", LoginRequest.class)
+                .isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class)).isTrue();
+        assertThat(AuthServiceImpl.class.getMethod("refresh", RefreshTokenRequest.class)
+                .isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class)).isTrue();
+    }
+
+    @Test
+    void shouldRejectRefreshWhenDurableAuthenticationVersionChanged() {
+        AuthSession oldSession = new AuthSession(
+                "session-1", 11L, 22L, "admin", "Admin", Set.of(), 4L, "old-hash");
+        SystemUser currentUser = enabledUser(22L, "admin", "Admin", "encoded");
+        currentUser.setAuthVersion(5L);
+        when(tokenHashService.hash("old-refresh")).thenReturn("old-hash");
+        when(sessionStore.peekRefreshSession("old-hash")).thenReturn(Optional.of(oldSession));
+        when(userService.requireEnabledForSession(11L, 22L)).thenReturn(currentUser);
+
+        assertThatThrownBy(() -> authService.refresh(new RefreshTokenRequest("old-refresh")))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(AuthErrorCode.INVALID_REFRESH_TOKEN);
+
+        verify(tenantService).lockAndRequireEnabled(11L);
+        verify(sessionStore).delete("session-1");
+        verify(sessionStore, never()).rotateRefreshToken(any(), any(), any());
+    }
+
+    @Test
     void shouldUseAtomicTaskNineRotationAndIssueTokensFromRotatedSession() {
         AuthSession rotated = new AuthSession(
                 "session-1", 11L, 22L, "admin", "Admin", Set.of("system:user:list"), "new-hash");
+        SystemUser currentUser = enabledUser(22L, "admin", "Admin", "encoded");
+        currentUser.setAuthVersion(0L);
         when(tokenHashService.hash("old-refresh")).thenReturn("old-hash");
         when(refreshTokenGenerator.generate()).thenReturn("new-refresh");
         when(tokenHashService.hash("new-refresh")).thenReturn("new-hash");
+        when(sessionStore.peekRefreshSession("old-hash")).thenReturn(Optional.of(rotated));
+        when(userService.requireEnabledForSession(11L, 22L)).thenReturn(currentUser);
         when(sessionStore.rotateRefreshToken("old-hash", "new-hash", REFRESH_TTL))
                 .thenReturn(Optional.of(rotated));
         when(accessTokenService.issue(any())).thenReturn("new-access");
@@ -301,15 +364,12 @@ class AuthServiceTest {
     @Test
     void shouldRejectRefreshReplayWithoutRestoringOldToken() {
         when(tokenHashService.hash("replayed-refresh")).thenReturn("old-hash");
-        when(refreshTokenGenerator.generate()).thenReturn("unreturned-refresh");
-        when(tokenHashService.hash("unreturned-refresh")).thenReturn("new-hash");
-        when(sessionStore.rotateRefreshToken("old-hash", "new-hash", REFRESH_TTL)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> authService.refresh(new RefreshTokenRequest("replayed-refresh")))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
                 .isEqualTo(AuthErrorCode.INVALID_REFRESH_TOKEN);
-        verify(sessionStore).rotateRefreshToken("old-hash", "new-hash", REFRESH_TTL);
+        verify(sessionStore).peekRefreshSession("old-hash");
         verifyNoInteractions(accessTokenService);
     }
 

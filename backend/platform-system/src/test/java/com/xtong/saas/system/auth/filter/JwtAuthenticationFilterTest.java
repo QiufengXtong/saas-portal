@@ -5,6 +5,7 @@ import com.xtong.saas.system.auth.model.AuthSession;
 import com.xtong.saas.system.auth.model.AuthenticatedUser;
 import com.xtong.saas.system.auth.session.SessionStore;
 import com.xtong.saas.system.auth.service.SecurityAuditorProvider;
+import com.xtong.saas.system.auth.service.SessionPrincipalValidator;
 import com.xtong.saas.system.auth.token.AccessTokenService;
 import com.xtong.saas.system.tenant.context.TenantContextHolder;
 import com.xtong.saas.system.tenant.context.TenantScope;
@@ -25,6 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** 验证 JWT 请求认证、Redis 会话身份绑定以及线程上下文清理边界。 */
@@ -158,6 +160,26 @@ class JwtAuthenticationFilterTest {
         assertThat(response.getStatus()).isEqualTo(401);
         assertThat(response.getContentAsString()).contains("\"code\":1101");
         assertThat(TenantContextHolder.currentTenantId()).isEmpty();
+    }
+
+    @Test
+    void shouldDeleteAndRejectSessionWhenDatabaseAuthenticationVersionIsStale() throws Exception {
+        AuthenticatedUser claims = new AuthenticatedUser(7L, 11L, "session-1", "alice", Set.of());
+        AuthSession session = new AuthSession(
+                "session-1", 7L, 11L, "alice", "Alice", Set.of(), 3L, "hash");
+        SessionPrincipalValidator validator = ignored -> false;
+        JwtAuthenticationFilter validatingFilter = new JwtAuthenticationFilter(
+                accessTokenService, sessionStore,
+                new RestAuthenticationEntryPoint(new ObjectMapper()), validator);
+        when(accessTokenService.parse("valid-token")).thenReturn(claims);
+        when(sessionStore.find("session-1")).thenReturn(Optional.of(session));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        validatingFilter.doFilter(requestWithAuthorization("Bearer valid-token"), response,
+                (request, servletResponse) -> { throw new AssertionError("stale session reached chain"); });
+
+        assertThat(response.getStatus()).isEqualTo(401);
+        verify(sessionStore).delete("session-1");
     }
 
     @Test

@@ -2,8 +2,8 @@ package com.xtong.saas.system.user.service;
 
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.xtong.saas.common.exception.BusinessException;
+import com.xtong.saas.common.mybatis.AuditorProvider;
 import com.xtong.saas.system.auth.api.SessionRevocationService;
-import com.xtong.saas.system.role.entity.SystemUserRole;
 import com.xtong.saas.system.role.mapper.SystemRoleMapper;
 import com.xtong.saas.system.role.mapper.SystemUserRoleMapper;
 import com.xtong.saas.system.tenant.context.TenantScope;
@@ -11,6 +11,7 @@ import com.xtong.saas.system.tenant.mapper.SystemTenantMapper;
 import com.xtong.saas.system.user.dto.CreateUserDTO;
 import com.xtong.saas.system.user.dto.ResetPasswordDTO;
 import com.xtong.saas.system.user.dto.UserQueryDTO;
+import com.xtong.saas.system.user.dto.UpdateUserDTO;
 import com.xtong.saas.system.user.entity.SystemUser;
 import com.xtong.saas.system.user.enums.UserStatus;
 import com.xtong.saas.system.user.exception.UserErrorCode;
@@ -27,11 +28,13 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.OptionalLong;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -50,8 +53,10 @@ class UserServiceTest {
     private final SystemTenantMapper tenantMapper = mock(SystemTenantMapper.class);
     private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
     private final SessionRevocationService sessionRevocationService = mock(SessionRevocationService.class);
+    private final AuditorProvider auditorProvider = () -> OptionalLong.of(42L);
     private final UserService service = new UserServiceImpl(
-            userMapper, roleMapper, userRoleMapper, tenantMapper, passwordEncoder, sessionRevocationService);
+            userMapper, roleMapper, userRoleMapper, tenantMapper, passwordEncoder,
+            sessionRevocationService, auditorProvider);
 
     @AfterEach
     void shouldClearTransactionSynchronization() {
@@ -112,7 +117,7 @@ class UserServiceTest {
         order.verify(roleMapper).countByTenantAndIds(1L, Set.of(8L));
         order.verify(userMapper).insert(any(SystemUser.class));
         order.verify(userRoleMapper).deleteByUser(1L, 10L);
-        order.verify(userRoleMapper).insert(any(SystemUserRole.class));
+        order.verify(userRoleMapper).insertBatch(eq(1L), eq(10L), eq(Set.of(8L)), eq(42L), any());
     }
 
     @Test
@@ -161,10 +166,39 @@ class UserServiceTest {
         TenantScope.run(1L, () -> service.assignRoles(10L, Set.of(8L, 9L)));
 
         verify(userRoleMapper).deleteByUser(1L, 10L);
-        verify(userRoleMapper, org.mockito.Mockito.times(2)).insert(any(SystemUserRole.class));
+        verify(userRoleMapper).insertBatch(eq(1L), eq(10L), eq(Set.of(8L, 9L)), eq(42L), any());
         verify(sessionRevocationService, never()).revokeAllUserSessions(1L, 10L);
         afterCommit();
         verify(sessionRevocationService).revokeAllUserSessions(1L, 10L);
+    }
+
+    @Test
+    void shouldTreatIdenticalRoleAssignmentAsNoOpWithoutVersionIncrement() {
+        SystemUser user = user(10L, UserStatus.ENABLED);
+        when(userMapper.selectOne(any())).thenReturn(user);
+        when(roleMapper.countByTenantAndIds(1L, Set.of(8L))).thenReturn(1L);
+        when(userRoleMapper.selectRoleIdsByUserId(1L, 10L)).thenReturn(List.of(8L));
+
+        TenantScope.run(1L, () -> service.assignRoles(10L, Set.of(8L)));
+
+        verify(userRoleMapper, never()).deleteByUser(1L, 10L);
+        verify(userMapper, never()).incrementAuthVersion(1L, 10L);
+    }
+
+    @Test
+    void shouldNormalizeUpdatedUsernameWhileHoldingTenantLockAndIncrementVersion() {
+        SystemUser user = user(10L, UserStatus.ENABLED);
+        when(userMapper.selectOne(any())).thenReturn(user);
+
+        TenantScope.run(1L, () -> service.update(
+                10L, new UpdateUserDTO("  ALICE.NEW  ", "Alice", null, null)));
+
+        assertThat(user.getUsername()).isEqualTo("alice.new");
+        org.mockito.InOrder order = inOrder(tenantMapper, userMapper);
+        order.verify(tenantMapper).lockByIdForAdminInvariant(1L);
+        order.verify(userMapper).selectOne(any());
+        order.verify(userMapper).updateById(user);
+        order.verify(userMapper).incrementAuthVersion(1L, 10L);
     }
 
     @Test
@@ -216,7 +250,7 @@ class UserServiceTest {
         org.mockito.InOrder order = inOrder(tenantMapper, userMapper);
         order.verify(tenantMapper).lockByIdForAdminInvariant(1L);
         order.verify(userMapper).selectOne(any());
-        verify(userMapper).deleteById(10L);
+        verify(userMapper).logicalDeleteWithAudit(eq(1L), eq(10L), anyLong(), any());
     }
 
     @Test
@@ -231,6 +265,23 @@ class UserServiceTest {
 
         afterRollback();
         verify(sessionRevocationService, never()).revokeAllUserSessions(1L, 10L);
+    }
+
+    @Test
+    void shouldKeepCommittedAuthVersionWhenBestEffortRevocationFails() {
+        SystemUser user = user(10L, UserStatus.ENABLED);
+        when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
+        when(userMapper.selectOne(any())).thenReturn(user);
+        when(roleMapper.existsTenantAdminRole(1L, 10L)).thenReturn(false);
+        doThrow(new IllegalStateException("redis unavailable"))
+                .when(sessionRevocationService).revokeAllUserSessions(1L, 10L);
+        TransactionSynchronizationManager.initSynchronization();
+
+        TenantScope.run(1L, () -> service.disable(10L, 11L));
+        afterCommit();
+
+        verify(userMapper).incrementAuthVersion(1L, 10L);
+        verify(sessionRevocationService).revokeAllUserSessions(1L, 10L);
     }
 
     @Test

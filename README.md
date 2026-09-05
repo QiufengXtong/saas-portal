@@ -106,9 +106,11 @@ Copy-Item .env.example .env
 
 ## 数据库迁移与首次初始化
 
-应用启动时由 Flyway 按顺序执行 `backend/platform-system/src/main/resources/db/migration` 中的版本脚本：V1 创建 IAM 表，V2 初始化全局菜单与 19 个固定权限码，V3 创建多实例首租户初始化锁。
+应用启动时由 Flyway 按顺序执行 `backend/platform-system/src/main/resources/db/migration` 中的版本脚本：V1 创建 IAM 表，V2 初始化全局菜单与 19 个固定权限码，V3 创建多实例首租户初始化锁，V4 增加用户认证安全版本及角色反向查询索引。
 
 仅当数据库中不存在任何租户时，应用才使用 `BOOTSTRAP_*` 创建首租户、管理员、内置 `TENANT_ADMIN` 角色及用户角色关联；已有租户时不会再次创建。迁移脚本是表结构和权限目录的唯一演进入口，请勿修改已发布版本，应新增更高版本脚本。
+
+租户编码和用户名会先去除首尾空白并按 `Locale.ROOT` 转为小写，之后必须匹配 ASCII 规则 `[a-z0-9][a-z0-9._-]*`，最大 64 个字符；冒号、内部空白、重音字符及其他 Unicode 字符均不允许。数据库只保存规范化值，登录失败键也只使用已规范化的合法身份。
 
 ## 认证与授权
 
@@ -130,7 +132,7 @@ GET  /api/v1/auth/me       读取当前用户
 /api/v1/system/menus       菜单树和权限码目录
 ```
 
-访问认证接口时使用 HTTP 请求头 `Authorization: Bearer <access-token>`；示例中的 `<access-token>` 是占位符。刷新令牌按会话在 Redis 中保存摘要并轮换，支持同一用户多设备登录。权限码采用 `领域:资源:动作` 格式，例如 `system:user:list`；内置 `TENANT_ADMIN` 角色拥有全部已启用权限，其他角色通过菜单关联获得权限。
+访问认证接口时使用 HTTP 请求头 `Authorization: Bearer <access-token>`；示例中的 `<access-token>` 是占位符。刷新令牌按会话在 Redis 中保存摘要并轮换，支持同一用户多设备登录。用户状态、密码或权限变化会递增数据库认证版本；即使 Redis 清理暂时失败，旧会话也会在请求和刷新时被拒绝。权限码采用 `领域:资源:动作` 格式，例如 `system:user:list`；内置 `TENANT_ADMIN` 角色拥有全部已启用权限，其他角色通过菜单关联获得权限。
 
 ## Docker Compose 启动
 

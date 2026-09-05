@@ -18,4 +18,19 @@ public interface SystemTenantMapper extends BaseMapper<SystemTenant> {
             FOR UPDATE
             """)
     Long lockByIdForAdminInvariant(@Param("tenantId") long tenantId);
+
+    @Select("""
+            SELECT * FROM sys_tenant
+            WHERE id = #{tenantId} AND tenant_code = #{tenantCode} AND deleted = 0
+            FOR UPDATE
+            """)
+    SystemTenant lockByIdAndCodeForAuthentication(
+            @Param("tenantId") long tenantId, @Param("tenantCode") String tenantCode);
+
+    @Select("""
+            SELECT * FROM sys_tenant
+            WHERE id = #{tenantId} AND deleted = 0
+            FOR UPDATE
+            """)
+    SystemTenant lockByIdForAuthentication(@Param("tenantId") long tenantId);
 }

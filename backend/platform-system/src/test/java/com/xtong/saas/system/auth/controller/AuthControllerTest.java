@@ -10,6 +10,7 @@ import com.xtong.saas.system.auth.dto.RefreshTokenRequest;
 import com.xtong.saas.system.auth.model.AuthSession;
 import com.xtong.saas.system.auth.model.AuthenticatedUser;
 import com.xtong.saas.system.auth.service.AuthService;
+import com.xtong.saas.system.auth.service.SessionPrincipalValidator;
 import com.xtong.saas.system.auth.session.SessionStore;
 import com.xtong.saas.system.auth.token.AccessTokenService;
 import com.xtong.saas.system.auth.vo.CurrentUserVO;
@@ -72,8 +73,12 @@ class AuthControllerTest {
     @MockitoBean
     private SessionStore sessionStore;
 
+    @MockitoBean
+    private SessionPrincipalValidator sessionPrincipalValidator;
+
     @BeforeEach
     void setUpMockMvc() {
+        when(sessionPrincipalValidator.isValid(any())).thenReturn(true);
         mockMvc = MockMvcBuilders.webAppContextSetup(applicationContext)
                 .apply(springSecurity())
                 .build();
@@ -106,7 +111,7 @@ class AuthControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.accessToken").value("access"));
 
-        verify(authService).login(new LoginRequest("acme", "admin", "password"));
+        verify(authService).login(new LoginRequest("ACME", "Admin", "password"));
     }
 
     @Test

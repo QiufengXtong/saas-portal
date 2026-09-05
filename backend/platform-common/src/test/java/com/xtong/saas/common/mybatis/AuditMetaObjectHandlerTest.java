@@ -53,6 +53,20 @@ class AuditMetaObjectHandlerTest {
     }
 
     @Test
+    void shouldOverwriteStaleUpdateAuditFieldsOnUpdate() {
+        AuditMetaObjectHandler handler = handlerFor(42L);
+        TestEntity entity = new TestEntity();
+        LocalDateTime stale = LocalDateTime.of(2020, 1, 1, 0, 0);
+        entity.setUpdatedBy(7L);
+        entity.setUpdatedAt(stale);
+
+        handler.updateFill(SystemMetaObject.forObject(entity));
+
+        assertEquals(42L, entity.getUpdatedBy());
+        org.junit.jupiter.api.Assertions.assertTrue(entity.getUpdatedAt().isAfter(stale));
+    }
+
+    @Test
     void shouldUseSystemAuditorWhenNoAuditorProviderIsRegistered() {
         StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
         AuditMetaObjectHandler handler = new AuditMetaObjectHandler(beanFactory.getBeanProvider(AuditorProvider.class));

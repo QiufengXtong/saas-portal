@@ -690,7 +690,7 @@ git commit -m "feat(system): 实现菜单树和权限加载"
 - Modify: `backend/platform-system/src/main/java/com/xtong/saas/system/role/mapper/SystemUserRoleMapper.java`
 - Create: `backend/platform-system/src/main/java/com/xtong/saas/system/user/dto/UserQueryDTO.java`
 - Create: `backend/platform-system/src/main/java/com/xtong/saas/system/user/dto/CreateUserDTO.java`
-- Create: `backend/platform-system/src/main/java/com/xtong/saas/system/user/dto/UpdateUserDTO.java`
+- Create: `backend/platform-system/src/main/java/com/xtong/saas/system/user/dto/UpdateUserDTO.java`（用户名存在时复用统一身份规范化并使旧会话失效）
 - Create: `backend/platform-system/src/main/java/com/xtong/saas/system/user/dto/ResetPasswordDTO.java`
 - Create: `backend/platform-system/src/main/java/com/xtong/saas/system/user/dto/AssignUserRolesDTO.java`
 - Create: `backend/platform-system/src/main/java/com/xtong/saas/system/user/vo/UserVO.java`

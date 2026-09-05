@@ -1,6 +1,7 @@
 package com.xtong.saas.system.role.service;
 
 import com.xtong.saas.common.exception.BusinessException;
+import com.xtong.saas.common.mybatis.AuditorProvider;
 import com.xtong.saas.system.auth.api.SessionRevocationService;
 import com.xtong.saas.system.menu.mapper.SystemMenuMapper;
 import com.xtong.saas.system.role.entity.SystemRole;
@@ -12,21 +13,25 @@ import com.xtong.saas.system.role.mapper.SystemUserRoleMapper;
 import com.xtong.saas.system.role.service.impl.RoleServiceImpl;
 import com.xtong.saas.system.tenant.context.TenantScope;
 import com.xtong.saas.system.tenant.mapper.SystemTenantMapper;
+import com.xtong.saas.system.user.mapper.SystemUserMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.List;
+import java.util.OptionalLong;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doThrow;
 
 /** 验证角色服务严格限定租户边界、保护内置管理员角色并在提交后撤销受影响会话。 */
 class RoleServiceTest {
@@ -37,8 +42,11 @@ class RoleServiceTest {
     private final SystemMenuMapper menuMapper = mock(SystemMenuMapper.class);
     private final SystemTenantMapper tenantMapper = mock(SystemTenantMapper.class);
     private final SessionRevocationService sessionRevocationService = mock(SessionRevocationService.class);
+    private final SystemUserMapper userMapper = mock(SystemUserMapper.class);
+    private final AuditorProvider auditorProvider = () -> OptionalLong.of(42L);
     private final RoleService service = new RoleServiceImpl(
-            roleMapper, userRoleMapper, roleMenuMapper, menuMapper, tenantMapper, sessionRevocationService);
+            roleMapper, userRoleMapper, roleMenuMapper, menuMapper, tenantMapper, userMapper,
+            sessionRevocationService, auditorProvider);
 
     @AfterEach
     void shouldClearTransactionSynchronization() {
@@ -126,7 +134,10 @@ class RoleServiceTest {
         TenantScope.run(1L, () -> service.assignMenus(8L, Set.of(101L, 102L)));
 
         verify(roleMenuMapper).deleteByRole(1L, 8L);
-        verify(roleMenuMapper).insertBatch(1L, 8L, Set.of(101L, 102L));
+        verify(roleMenuMapper).insertBatch(
+                org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.eq(8L),
+                org.mockito.ArgumentMatchers.eq(Set.of(101L, 102L)),
+                org.mockito.ArgumentMatchers.eq(42L), org.mockito.ArgumentMatchers.any());
         verify(sessionRevocationService, never()).revokeAllUserSessions(1L, 10L);
         afterCommit();
         verify(sessionRevocationService).revokeAllUserSessions(1L, 10L);
@@ -148,7 +159,23 @@ class RoleServiceTest {
         order.verify(menuMapper).countEnabledByIds(Set.of(101L));
         order.verify(userRoleMapper).selectUserIdsByRole(1L, 8L);
         order.verify(roleMenuMapper).deleteByRole(1L, 8L);
-        order.verify(roleMenuMapper).insertBatch(1L, 8L, Set.of(101L));
+        order.verify(roleMenuMapper).insertBatch(
+                org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.eq(8L),
+                org.mockito.ArgumentMatchers.eq(Set.of(101L)),
+                org.mockito.ArgumentMatchers.eq(42L), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void shouldTreatIdenticalMenuAssignmentAsNoOpWithoutVersionIncrement() {
+        when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
+        when(roleMapper.selectOne(any())).thenReturn(role(8L, false));
+        when(menuMapper.countEnabledByIds(Set.of(101L))).thenReturn(1L);
+        when(roleMenuMapper.selectMenuIdsByRole(1L, 8L)).thenReturn(List.of(101L));
+
+        TenantScope.run(1L, () -> service.assignMenus(8L, Set.of(101L)));
+
+        verify(roleMenuMapper, never()).deleteByRole(1L, 8L);
+        verify(userMapper, never()).incrementAuthVersions(anyLong(), any());
     }
 
     @Test
@@ -163,6 +190,23 @@ class RoleServiceTest {
 
         afterRollback();
         verify(sessionRevocationService, never()).revokeAllUserSessions(1L, 10L);
+    }
+
+    @Test
+    void shouldContinueRevokingLaterUsersWhenFirstRedisCleanupFails() {
+        when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
+        when(roleMapper.selectOne(any())).thenReturn(role(8L, false));
+        when(menuMapper.countEnabledByIds(Set.of(101L))).thenReturn(1L);
+        when(userRoleMapper.selectUserIdsByRole(1L, 8L)).thenReturn(List.of(10L, 11L));
+        doThrow(new IllegalStateException("redis unavailable"))
+                .when(sessionRevocationService).revokeAllUserSessions(1L, 10L);
+        TransactionSynchronizationManager.initSynchronization();
+
+        TenantScope.run(1L, () -> service.assignMenus(8L, Set.of(101L)));
+        afterCommit();
+
+        verify(userMapper).incrementAuthVersions(1L, List.of(10L, 11L));
+        verify(sessionRevocationService).revokeAllUserSessions(1L, 11L);
     }
 
     @Test

@@ -41,7 +41,8 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
                 redis.call('DEL', KEYS[1])
                 return 0
             end
-            redis.call('SADD', KEYS[3], ARGV[2])
+            redis.call('ZREMRANGEBYSCORE', KEYS[3], '-inf', ARGV[4])
+            redis.call('ZADD', KEYS[3], ARGV[5], ARGV[2])
             redis.call('PEXPIRE', KEYS[3], ARGV[3])
             return 1
             """, Long.class);
@@ -76,7 +77,8 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
             redis.call('SET', KEYS[2], sessionId, 'PX', ARGV[5])
             redis.call('DEL', KEYS[1])
             local userKey = ARGV[2] .. tostring(stored.tenantId) .. ':' .. tostring(stored.userId)
-            redis.call('SADD', userKey, sessionId)
+            redis.call('ZREMRANGEBYSCORE', userKey, '-inf', ARGV[6])
+            redis.call('ZADD', userKey, ARGV[7], sessionId)
             redis.call('PEXPIRE', userKey, ARGV[5])
             return rotated
             """, String.class);
@@ -98,8 +100,9 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
             end
             if stored.tenantId and stored.userId and stored.sessionId then
                 local userKey = ARGV[2] .. tostring(stored.tenantId) .. ':' .. tostring(stored.userId)
-                redis.call('SREM', userKey, stored.sessionId)
-                if redis.call('SCARD', userKey) == 0 then
+                redis.call('ZREMRANGEBYSCORE', userKey, '-inf', ARGV[3])
+                redis.call('ZREM', userKey, stored.sessionId)
+                if redis.call('ZCARD', userKey) == 0 then
                     redis.call('DEL', userKey)
                 end
             end
@@ -108,7 +111,8 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
 
     /** 原子遍历用户索引并删除该用户全部会话及其当前 Refresh 摘要。 */
     private static final DefaultRedisScript<Long> DELETE_ALL_SCRIPT = new DefaultRedisScript<>("""
-            local sessionIds = redis.call('SMEMBERS', KEYS[1])
+            redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[3])
+            local sessionIds = redis.call('ZRANGE', KEYS[1], 0, -1)
             for _, sessionId in ipairs(sessionIds) do
                 local sessionKey = ARGV[1] .. sessionId
                 local serialized = redis.call('GET', sessionKey)
@@ -137,6 +141,8 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
         Objects.requireNonNull(session, "session must not be null");
         Objects.requireNonNull(refreshTokenHash, "refreshTokenHash must not be null");
         String ttlMillis = ttlMillis(ttl);
+        long now = System.currentTimeMillis();
+        String expiresAt = Long.toString(Math.addExact(now, Long.parseLong(ttlMillis)));
         StoredAuthSession storedSession = StoredAuthSession.from(session, refreshTokenHash);
         Long result = redisTemplate.execute(
                 CREATE_SCRIPT,
@@ -146,7 +152,9 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
                         userSessionsKey(session.tenantId(), session.userId())),
                 serialize(storedSession),
                 session.sessionId(),
-                ttlMillis);
+                ttlMillis,
+                Long.toString(now),
+                expiresAt);
         return Long.valueOf(1L).equals(result);
     }
 
@@ -154,6 +162,13 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
     public Optional<AuthSession> find(String sessionId) {
         String serialized = redisTemplate.opsForValue().get(sessionKey(sessionId));
         return deserialize(serialized);
+    }
+
+    @Override
+    public Optional<AuthSession> peekRefreshSession(String refreshTokenHash) {
+        Objects.requireNonNull(refreshTokenHash, "refreshTokenHash must not be null");
+        String sessionId = redisTemplate.opsForValue().get(refreshKey(refreshTokenHash));
+        return sessionId == null ? Optional.empty() : find(sessionId);
     }
 
     @Override
@@ -170,7 +185,9 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
                 USER_SESSIONS_KEY_PREFIX,
                 currentRefreshTokenHash,
                 newRefreshTokenHash,
-                ttlMillis(ttl));
+                ttlMillis(ttl),
+                Long.toString(System.currentTimeMillis()),
+                expiresAt(ttl));
         return deserialize(rotated);
     }
 
@@ -180,7 +197,8 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
                 DELETE_SCRIPT,
                 List.of(sessionKey(sessionId)),
                 REFRESH_KEY_PREFIX,
-                USER_SESSIONS_KEY_PREFIX);
+                USER_SESSIONS_KEY_PREFIX,
+                Long.toString(System.currentTimeMillis()));
     }
 
     @Override
@@ -189,7 +207,8 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
                 DELETE_ALL_SCRIPT,
                 List.of(userSessionsKey(tenantId, userId)),
                 SESSION_KEY_PREFIX,
-                REFRESH_KEY_PREFIX);
+                REFRESH_KEY_PREFIX,
+                Long.toString(System.currentTimeMillis()));
     }
 
     @Override
@@ -235,6 +254,10 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
         return Long.toString(milliseconds);
     }
 
+    private static String expiresAt(Duration ttl) {
+        return Long.toString(Math.addExact(System.currentTimeMillis(), Long.parseLong(ttlMillis(ttl))));
+    }
+
     private static String sessionKey(String sessionId) {
         return SESSION_KEY_PREFIX + sessionId;
     }
@@ -255,6 +278,7 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
             String username,
             String displayName,
             Map<String, Boolean> permissions,
+            String authVersion,
             String refreshTokenHash) {
 
         private static StoredAuthSession from(AuthSession session, String refreshTokenHash) {
@@ -266,6 +290,7 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
                     session.displayName(),
                     session.permissions().stream().collect(Collectors.toUnmodifiableMap(
                             Function.identity(), ignored -> Boolean.TRUE)),
+                    Long.toString(session.authVersion()),
                     refreshTokenHash);
         }
 
@@ -277,6 +302,7 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
                     username,
                     displayName,
                     permissions == null ? Set.of() : permissions.keySet(),
+                    authVersion == null ? 0L : Long.parseLong(authVersion),
                     refreshTokenHash);
         }
     }

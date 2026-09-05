@@ -3,6 +3,7 @@ package com.xtong.saas.system.tenant.service.impl;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.xtong.saas.common.exception.BusinessException;
 import com.xtong.saas.system.tenant.entity.SystemTenant;
+import com.xtong.saas.system.identity.IdentityNormalizer;
 import com.xtong.saas.system.tenant.enums.TenantStatus;
 import com.xtong.saas.system.tenant.exception.TenantErrorCode;
 import com.xtong.saas.system.tenant.mapper.SystemTenantMapper;
@@ -21,8 +22,9 @@ public class TenantServiceImpl implements TenantService {
 
     @Override
     public SystemTenant requireEnabledByCode(String tenantCode) {
+        String normalizedCode = IdentityNormalizer.requireManagement(tenantCode);
         SystemTenant tenant = tenantMapper.selectOne(Wrappers.<SystemTenant>query()
-                .eq("tenant_code", tenantCode)
+                .eq("tenant_code", normalizedCode)
                 .eq("deleted", false));
         if (tenant == null) {
             throw new BusinessException(TenantErrorCode.TENANT_NOT_FOUND);
@@ -37,5 +39,30 @@ public class TenantServiceImpl implements TenantService {
     public boolean hasAnyTenant() {
         return tenantMapper.selectCount(Wrappers.<SystemTenant>query()
                 .eq("deleted", false)) > 0;
+    }
+
+    @Override
+    public SystemTenant lockAndRequireEnabled(long tenantId, String tenantCode) {
+        String normalizedCode = IdentityNormalizer.requireManagement(tenantCode);
+        SystemTenant tenant = tenantMapper.lockByIdAndCodeForAuthentication(tenantId, normalizedCode);
+        if (tenant == null) {
+            throw new BusinessException(TenantErrorCode.TENANT_NOT_FOUND);
+        }
+        if (tenant.getStatus() != TenantStatus.ENABLED) {
+            throw new BusinessException(TenantErrorCode.TENANT_DISABLED);
+        }
+        return tenant;
+    }
+
+    @Override
+    public SystemTenant lockAndRequireEnabled(long tenantId) {
+        SystemTenant tenant = tenantMapper.lockByIdForAuthentication(tenantId);
+        if (tenant == null) {
+            throw new BusinessException(TenantErrorCode.TENANT_NOT_FOUND);
+        }
+        if (tenant.getStatus() != TenantStatus.ENABLED) {
+            throw new BusinessException(TenantErrorCode.TENANT_DISABLED);
+        }
+        return tenant;
     }
 }

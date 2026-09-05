@@ -7,5 +7,9 @@ public interface TenantService {
 
     SystemTenant requireEnabledByCode(String tenantCode);
 
+    SystemTenant lockAndRequireEnabled(long tenantId, String tenantCode);
+
+    SystemTenant lockAndRequireEnabled(long tenantId);
+
     boolean hasAnyTenant();
 }
