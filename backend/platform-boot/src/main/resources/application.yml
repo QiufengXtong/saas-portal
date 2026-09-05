@@ -31,17 +31,17 @@ mybatis-plus:
 
 saas:
   auth:
-    jwt-secret: ${JWT_SECRET}
+    jwt-secret: ${JWT_SECRET:}
     access-token-ttl: ${ACCESS_TOKEN_TTL:15m}
     refresh-token-ttl: ${REFRESH_TOKEN_TTL:7d}
     login-failure-limit: ${LOGIN_FAILURE_LIMIT:5}
     login-failure-window: ${LOGIN_FAILURE_WINDOW:15m}
     login-lock-duration: ${LOGIN_LOCK_DURATION:15m}
   bootstrap:
-    tenant-code: ${BOOTSTRAP_TENANT_CODE}
-    tenant-name: ${BOOTSTRAP_TENANT_NAME}
-    admin-username: ${BOOTSTRAP_ADMIN_USERNAME}
-    admin-password: ${BOOTSTRAP_ADMIN_PASSWORD}
+    tenant-code: ${BOOTSTRAP_TENANT_CODE:}
+    tenant-name: ${BOOTSTRAP_TENANT_NAME:}
+    admin-username: ${BOOTSTRAP_ADMIN_USERNAME:}
+    admin-password: ${BOOTSTRAP_ADMIN_PASSWORD:}
 
 management:
   endpoints:

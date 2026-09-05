@@ -134,7 +134,7 @@ GET  /api/v1/auth/me       读取当前用户
 
 ## Docker Compose 启动
 
-Compose 统一启动前端、后端、MySQL 和 Redis：
+Compose 入口只支持全栈模式，统一启动前端、后端、MySQL 和 Redis，不支持仅启动其中部分服务；因此 Compose 会在解析阶段强制检查 IAM 必填变量：
 
 ```bash
 docker compose up --build
