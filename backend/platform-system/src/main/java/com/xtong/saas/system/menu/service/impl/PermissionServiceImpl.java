@@ -23,6 +23,7 @@ public class PermissionServiceImpl implements PermissionService {
     private final SystemRoleMenuMapper roleMenuMapper;
     private final MenuService menuService;
 
+    /** 创建权限服务并注入角色、关联与菜单领域依赖。 */
     public PermissionServiceImpl(
             SystemRoleMapper roleMapper,
             SystemUserRoleMapper userRoleMapper,
@@ -34,11 +35,13 @@ public class PermissionServiceImpl implements PermissionService {
         this.menuService = menuService;
     }
 
+    /** 在指定租户作用域内加载用户当前有效权限。 */
     @Override
     public Set<String> loadUserPermissions(long tenantId, long userId) {
         return TenantScope.call(tenantId, () -> loadScopedUserPermissions(tenantId, userId));
     }
 
+    /** 聚合用户角色权限，租户管理员直接获得全部按钮权限。 */
     private Set<String> loadScopedUserPermissions(long tenantId, long userId) {
         if (roleMapper.existsTenantAdminRole(tenantId, userId)) {
             return stableSet(menuService.getPermissionCodes());
@@ -50,6 +53,7 @@ public class PermissionServiceImpl implements PermissionService {
         return stableSet(roleMenuMapper.selectEnabledPermissionCodesByRoleIds(tenantId, roleIds));
     }
 
+    /** 去重并按字典序稳定排列权限码，返回不可变集合。 */
     private Set<String> stableSet(Iterable<String> permissionCodes) {
         TreeSet<String> sortedCodes = new TreeSet<>();
         for (String permissionCode : permissionCodes) {

@@ -14,10 +14,12 @@ public class DatabaseSessionPrincipalValidator implements SessionPrincipalValida
 
     private final SystemUserMapper userMapper;
 
+    /** 创建数据库会话主体校验器并注入用户数据访问依赖。 */
     public DatabaseSessionPrincipalValidator(SystemUserMapper userMapper) {
         this.userMapper = userMapper;
     }
 
+    /** 校验用户存在、启用且认证版本与会话一致。 */
     @Override
     public boolean isValid(AuthSession session) {
         SystemUser user = userMapper.selectOne(Wrappers.<SystemUser>query().lambda()

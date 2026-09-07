@@ -144,11 +144,13 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
 
+    /** 创建 Redis 会话服务并注入 Redis 访问及 JSON 序列化依赖。 */
     public RedisSessionStore(StringRedisTemplate redisTemplate, ObjectMapper objectMapper) {
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
     }
 
+    /** 原子创建会话、刷新令牌摘要映射和用户会话索引。 */
     @Override
     public boolean create(AuthSession session, String refreshTokenHash, Duration ttl) {
         Objects.requireNonNull(session, "session must not be null");
@@ -167,12 +169,14 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
         return Long.valueOf(1L).equals(result);
     }
 
+    /** 按会话 ID 查询并反序列化认证会话。 */
     @Override
     public Optional<AuthSession> find(String sessionId) {
         String serialized = redisTemplate.opsForValue().get(sessionKey(sessionId));
         return deserialize(serialized);
     }
 
+    /** 通过刷新令牌摘要查找当前会话但不消费令牌。 */
     @Override
     public Optional<AuthSession> peekRefreshSession(String refreshTokenHash) {
         Objects.requireNonNull(refreshTokenHash, "refreshTokenHash must not be null");
@@ -180,6 +184,7 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
         return sessionId == null ? Optional.empty() : find(sessionId);
     }
 
+    /** 原子消费旧刷新令牌并轮换为新摘要。 */
     @Override
     public Optional<AuthSession> rotateRefreshToken(
             String currentRefreshTokenHash,
@@ -198,6 +203,7 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
         return deserialize(rotated);
     }
 
+    /** 删除单个会话及其刷新令牌映射和用户索引。 */
     @Override
     public void delete(String sessionId) {
         redisTemplate.execute(
@@ -207,6 +213,7 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
                 USER_SESSIONS_KEY_PREFIX);
     }
 
+    /** 删除指定租户用户的全部会话及刷新令牌映射。 */
     @Override
     public void deleteAll(long tenantId, long userId) {
         redisTemplate.execute(
@@ -216,16 +223,19 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
                 REFRESH_KEY_PREFIX);
     }
 
+    /** 通过会话撤销 API 删除指定会话。 */
     @Override
     public void revokeSession(String sessionId) {
         delete(sessionId);
     }
 
+    /** 通过会话撤销 API 删除指定用户的全部会话。 */
     @Override
     public void revokeAllUserSessions(long tenantId, long userId) {
         deleteAll(tenantId, userId);
     }
 
+    /** 将存储会话序列化为 Redis JSON 字符串。 */
     private String serialize(StoredAuthSession session) {
         try {
             return objectMapper.writeValueAsString(session);
@@ -234,6 +244,7 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
         }
     }
 
+    /** 将 Redis JSON 字符串反序列化为领域会话。 */
     private Optional<AuthSession> deserialize(String serialized) {
         if (serialized == null) {
             return Optional.empty();
@@ -245,6 +256,7 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
         }
     }
 
+    /** 校验会话有效期并转换为 Redis 使用的毫秒字符串。 */
     private static String ttlMillis(Duration ttl) {
         Objects.requireNonNull(ttl, "ttl must not be null");
         long milliseconds;
@@ -259,14 +271,17 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
         return Long.toString(milliseconds);
     }
 
+    /** 生成指定会话 ID 的 Redis 键。 */
     private static String sessionKey(String sessionId) {
         return SESSION_KEY_PREFIX + sessionId;
     }
 
+    /** 生成指定刷新令牌摘要的 Redis 键。 */
     private static String refreshKey(String refreshTokenHash) {
         return REFRESH_KEY_PREFIX + refreshTokenHash;
     }
 
+    /** 生成指定租户用户的会话索引 Redis 键。 */
     private static String userSessionsKey(long tenantId, long userId) {
         return USER_SESSIONS_KEY_PREFIX + tenantId + ":" + userId;
     }
@@ -282,6 +297,7 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
             String authVersion,
             String refreshTokenHash) {
 
+        /** 将领域会话转换为适合 Redis JSON 往返的存储模型。 */
         private static StoredAuthSession from(AuthSession session, String refreshTokenHash) {
             return new StoredAuthSession(
                     session.sessionId(),
@@ -295,6 +311,7 @@ public class RedisSessionStore implements SessionStore, SessionRevocationService
                     refreshTokenHash);
         }
 
+        /** 将 Redis 存储模型恢复为领域会话。 */
         private AuthSession toDomain() {
             return new AuthSession(
                     sessionId,

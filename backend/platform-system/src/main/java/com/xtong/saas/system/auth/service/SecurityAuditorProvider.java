@@ -12,6 +12,7 @@ import java.util.OptionalLong;
 @Component
 public class SecurityAuditorProvider implements AuditorProvider {
 
+    /** 从当前已认证系统用户中获取审计用户 ID。 */
     @Override
     public OptionalLong currentAuditorId() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();

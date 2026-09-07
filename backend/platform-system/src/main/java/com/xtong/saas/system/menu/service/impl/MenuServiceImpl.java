@@ -31,10 +31,12 @@ public class MenuServiceImpl implements MenuService {
 
     private final SystemMenuMapper menuMapper;
 
+    /** 创建菜单服务并注入菜单数据访问依赖。 */
     public MenuServiceImpl(SystemMenuMapper menuMapper) {
         this.menuMapper = menuMapper;
     }
 
+    /** 加载启用菜单并构造成稳定排序的树形视图。 */
     @Override
     public List<MenuTreeNodeVO> getTree() {
         List<SystemMenu> menus = loadEnabledMenus();
@@ -60,6 +62,7 @@ public class MenuServiceImpl implements MenuService {
         return roots.stream().map(this::toView).toList();
     }
 
+    /** 加载全部启用按钮资源并返回稳定排序的权限码集合。 */
     @Override
     public Set<String> getPermissionCodes() {
         LinkedHashSet<String> permissionCodes = new LinkedHashSet<>();
@@ -72,6 +75,7 @@ public class MenuServiceImpl implements MenuService {
         return Collections.unmodifiableSet(permissionCodes);
     }
 
+    /** 按排序号和 ID 加载全部启用且未删除的菜单。 */
     private List<SystemMenu> loadEnabledMenus() {
         List<SystemMenu> menus = menuMapper.selectList(Wrappers.<SystemMenu>query().lambda()
                 .eq(SystemMenu::getDeleted, false)
@@ -85,6 +89,7 @@ public class MenuServiceImpl implements MenuService {
                 .toList();
     }
 
+    /** 递归将内部可变菜单节点转换为只读树节点。 */
     private MenuTreeNodeVO toView(MutableMenuNode node) {
         SystemMenu menu = node.menu();
         List<MenuTreeNodeVO> children = node.children().stream().map(this::toView).toList();
@@ -105,6 +110,7 @@ public class MenuServiceImpl implements MenuService {
     /** 保存建树期间的可变子节点集合，不向接口层泄露可变状态。 */
     private record MutableMenuNode(SystemMenu menu, List<MutableMenuNode> children) {
 
+        /** 创建菜单节点并初始化空子节点集合。 */
         private MutableMenuNode(SystemMenu menu) {
             this(menu, new ArrayList<>());
         }

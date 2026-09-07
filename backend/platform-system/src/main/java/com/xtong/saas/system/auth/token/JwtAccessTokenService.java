@@ -36,11 +36,13 @@ public class JwtAccessTokenService implements AccessTokenService {
     private final AuthProperties properties;
     private final Clock clock;
 
+    /** 使用系统 UTC 时钟创建生产环境 JWT 服务。 */
     @Autowired
     public JwtAccessTokenService(AuthProperties properties) {
         this(properties, Clock.systemUTC());
     }
 
+    /** 使用指定时钟创建可测试的 JWT 服务。 */
     JwtAccessTokenService(AuthProperties properties, Clock clock) {
         this.properties = properties;
         this.clock = clock;
@@ -54,6 +56,7 @@ public class JwtAccessTokenService implements AccessTokenService {
                 .build();
     }
 
+    /** 为认证主体签发带租户、用户和会话声明的 HS256 JWT。 */
     @Override
     public String issue(AuthenticatedUser user) {
         Instant issuedAt = clock.instant();
@@ -70,6 +73,7 @@ public class JwtAccessTokenService implements AccessTokenService {
         return encoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();
     }
 
+    /** 验证 JWT 并从必需声明恢复认证主体。 */
     @Override
     public AuthenticatedUser parse(String token) {
         Jwt jwt = decoder.decode(token);
@@ -81,6 +85,7 @@ public class JwtAccessTokenService implements AccessTokenService {
                 Set.of());
     }
 
+    /** 读取必需的长整型声明，类型错误时拒绝令牌。 */
     private static long requiredLongClaim(Jwt jwt, String claimName) {
         Object value = jwt.getClaim(claimName);
         if (!(value instanceof Number number)) {
@@ -89,6 +94,7 @@ public class JwtAccessTokenService implements AccessTokenService {
         return number.longValue();
     }
 
+    /** 读取必需的非空字符串声明，缺失时拒绝令牌。 */
     private static String requiredStringClaim(Jwt jwt, String claimName) {
         String value = jwt.getClaimAsString(claimName);
         if (value == null || value.isBlank()) {

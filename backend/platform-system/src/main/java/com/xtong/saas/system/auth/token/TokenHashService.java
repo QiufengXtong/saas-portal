@@ -11,6 +11,7 @@ import java.util.HexFormat;
 @Component
 public class TokenHashService {
 
+    /** 将令牌计算为小写十六进制 SHA-256 摘要。 */
     public String hash(String token) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256")

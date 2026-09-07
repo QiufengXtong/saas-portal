@@ -6,5 +6,6 @@ import com.xtong.saas.system.auth.model.AuthSession;
 @FunctionalInterface
 public interface SessionPrincipalValidator {
 
+    /** 校验会话主体与数据库中的用户安全状态是否一致。 */
     boolean isValid(AuthSession session);
 }

@@ -51,6 +51,7 @@ public class UserServiceImpl implements UserService {
     private final SessionRevocationService sessionRevocationService;
     private final AuditorProvider auditorProvider;
 
+    /** 创建用户服务并注入用户、角色、租户、会话及审计依赖。 */
     public UserServiceImpl(
             SystemUserMapper userMapper,
             SystemRoleMapper roleMapper,
@@ -68,6 +69,7 @@ public class UserServiceImpl implements UserService {
         this.auditorProvider = auditorProvider;
     }
 
+    /** 分页查询当前租户用户并组装角色信息。 */
     @Override
     public PageResult<UserVO> page(UserQueryDTO query) {
         long tenantId = TenantContextHolder.requireTenantId();
@@ -81,12 +83,14 @@ public class UserServiceImpl implements UserService {
         return PageResult.from(page, user -> toView(tenantId, user));
     }
 
+    /** 获取当前租户内指定用户的详情。 */
     @Override
     public UserVO get(long userId) {
         long tenantId = TenantContextHolder.requireTenantId();
         return toView(tenantId, requireUser(tenantId, userId));
     }
 
+    /** 创建用户、校验角色并建立初始角色关系。 */
     @Override
     @Transactional
     public String create(CreateUserDTO command) {
@@ -117,6 +121,7 @@ public class UserServiceImpl implements UserService {
         return user.getId().toString();
     }
 
+    /** 更新用户资料并使该用户已有会话失效。 */
     @Override
     @Transactional
     public void update(long userId, UpdateUserDTO command) {
@@ -143,6 +148,7 @@ public class UserServiceImpl implements UserService {
         revokeAfterCommit(tenantId, userId);
     }
 
+    /** 启用指定用户并刷新其认证版本。 */
     @Override
     @Transactional
     public void enable(long userId) {
@@ -150,6 +156,7 @@ public class UserServiceImpl implements UserService {
         changeStatus(tenantId, userId, UserStatus.ENABLED);
     }
 
+    /** 禁用非当前用户，同时保护租户最后一个有效管理员。 */
     @Override
     @Transactional
     public void disable(long userId, long currentUserId) {
@@ -168,6 +175,7 @@ public class UserServiceImpl implements UserService {
         }
     }
 
+    /** 重置用户密码并撤销已有会话。 */
     @Override
     @Transactional
     public void resetPassword(long userId, ResetPasswordDTO command) {
@@ -181,6 +189,7 @@ public class UserServiceImpl implements UserService {
         revokeAfterCommit(tenantId, userId);
     }
 
+    /** 逻辑删除非当前用户及其角色关系，并撤销已有会话。 */
     @Override
     @Transactional
     public void delete(long userId, long currentUserId) {
@@ -196,6 +205,7 @@ public class UserServiceImpl implements UserService {
         revokeAfterCommit(tenantId, userId);
     }
 
+    /** 替换用户角色，并保证租户至少保留一个有效管理员。 */
     @Override
     @Transactional
     public void assignRoles(long userId, Set<Long> roleIds) {
@@ -213,6 +223,7 @@ public class UserServiceImpl implements UserService {
         revokeAfterCommit(tenantId, userId);
     }
 
+    /** 在指定租户作用域内加载并校验可登录用户。 */
     @Override
     public SystemUser requireEnabledForLogin(long tenantId, String username) {
         return TenantScope.call(tenantId, () -> {
@@ -230,6 +241,7 @@ public class UserServiceImpl implements UserService {
         });
     }
 
+    /** 加载并校验可继续使用会话的用户。 */
     @Override
     public SystemUser requireEnabledForSession(long tenantId, long userId) {
         SystemUser user = requireUser(tenantId, userId);
@@ -239,6 +251,7 @@ public class UserServiceImpl implements UserService {
         return user;
     }
 
+    /** 更新用户最近一次成功登录时间。 */
     @Override
     @Transactional
     public void recordLoginSuccess(long userId, LocalDateTime loginAt) {
@@ -248,6 +261,7 @@ public class UserServiceImpl implements UserService {
         userMapper.updateById(user);
     }
 
+    /** 修改用户状态、递增认证版本并安排会话撤销。 */
     private void changeStatus(long tenantId, long userId, UserStatus status) {
         lockTenantForAdminInvariant(tenantId);
         SystemUser user = requireUser(tenantId, userId);
@@ -259,6 +273,7 @@ public class UserServiceImpl implements UserService {
         }
     }
 
+    /** 校验角色 ID 集合完整且全部属于当前租户。 */
     private void validateRoleIds(long tenantId, Set<Long> roleIds) {
         if (roleIds == null || roleIds.stream().anyMatch(roleId -> roleId == null || roleId <= 0)
                 || (!roleIds.isEmpty() && roleMapper.countByTenantAndIds(tenantId, roleIds) != roleIds.size())) {
@@ -266,6 +281,7 @@ public class UserServiceImpl implements UserService {
         }
     }
 
+    /** 物理替换用户角色关系并写入创建审计信息。 */
     private void replaceRoles(long tenantId, long userId, Set<Long> roleIds) {
         userRoleMapper.deleteByUser(tenantId, userId);
         if (!roleIds.isEmpty()) {
@@ -285,6 +301,7 @@ public class UserServiceImpl implements UserService {
         }
     }
 
+    /** 加载租户内未删除用户，不存在时抛出业务异常。 */
     private SystemUser requireUser(long tenantId, long userId) {
         SystemUser user = userMapper.selectOne(Wrappers.<SystemUser>query().lambda()
                 .eq(SystemUser::getTenantId, tenantId)
@@ -296,11 +313,13 @@ public class UserServiceImpl implements UserService {
         return user;
     }
 
+    /** 将用户实体及其角色 ID 组装为用户视图。 */
     private UserVO toView(long tenantId, SystemUser user) {
         List<Long> roleIds = userRoleMapper.selectRoleIdsByUserId(tenantId, user.getId());
         return UserVO.from(user, roleIds);
     }
 
+    /** 阻止停用或删除租户最后一个有效管理员。 */
     private void assertNotLastEnabledTenantAdmin(long tenantId, SystemUser user) {
         if (user.getStatus() == UserStatus.ENABLED
                 && roleMapper.existsTenantAdminRole(tenantId, user.getId())
@@ -309,6 +328,7 @@ public class UserServiceImpl implements UserService {
         }
     }
 
+    /** 阻止角色替换移除租户最后一个有效管理员资格。 */
     private void assertRoleReplacementPreservesTenantAdmin(long tenantId, SystemUser user, Set<Long> roleIds) {
         boolean keepsTenantAdminRole = !roleIds.isEmpty()
                 && roleMapper.containsTenantAdminRole(tenantId, roleIds);
@@ -320,13 +340,16 @@ public class UserServiceImpl implements UserService {
         }
     }
 
+    /** 锁定租户行以串行化管理员不变量检查。 */
     private void lockTenantForAdminInvariant(long tenantId) {
         tenantMapper.lockByIdForAdminInvariant(tenantId);
     }
 
+    /** 在事务提交后撤销用户会话，无活动事务时立即撤销。 */
     private void revokeAfterCommit(long tenantId, long userId) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                /** 在数据库事务成功提交后执行会话撤销。 */
                 @Override
                 public void afterCommit() {
                     safelyRevoke(tenantId, userId);
@@ -337,6 +360,7 @@ public class UserServiceImpl implements UserService {
         safelyRevoke(tenantId, userId);
     }
 
+    /** 尽力撤销用户会话，并在存储异常时保留持久认证版本兜底。 */
     private void safelyRevoke(long tenantId, long userId) {
         try {
             sessionRevocationService.revokeAllUserSessions(tenantId, userId);
@@ -346,6 +370,7 @@ public class UserServiceImpl implements UserService {
         }
     }
 
+    /** 获取当前审计用户 ID，缺少认证主体时拒绝管理操作。 */
     private long currentAuditorId() {
         return auditorProvider.currentAuditorId()
                 .orElseThrow(() -> new IllegalStateException("User management requires an authenticated auditor"));

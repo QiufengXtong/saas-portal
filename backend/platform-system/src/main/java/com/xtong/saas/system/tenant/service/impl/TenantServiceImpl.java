@@ -16,10 +16,12 @@ public class TenantServiceImpl implements TenantService {
 
     private final SystemTenantMapper tenantMapper;
 
+    /** 创建租户服务并注入租户数据访问依赖。 */
     public TenantServiceImpl(SystemTenantMapper tenantMapper) {
         this.tenantMapper = tenantMapper;
     }
 
+    /** 按标准化租户编码加载并校验启用状态。 */
     @Override
     public SystemTenant requireEnabledByCode(String tenantCode) {
         String normalizedCode = IdentityNormalizer.requireManagement(tenantCode);
@@ -35,12 +37,14 @@ public class TenantServiceImpl implements TenantService {
         return tenant;
     }
 
+    /** 判断系统中是否已经存在未删除租户。 */
     @Override
     public boolean hasAnyTenant() {
         return tenantMapper.selectCount(Wrappers.<SystemTenant>query().lambda()
                 .eq(SystemTenant::getDeleted, false)) > 0;
     }
 
+    /** 按租户 ID 和标准化编码加锁加载并校验启用状态。 */
     @Override
     public SystemTenant lockAndRequireEnabled(long tenantId, String tenantCode) {
         String normalizedCode = IdentityNormalizer.requireManagement(tenantCode);
@@ -54,6 +58,7 @@ public class TenantServiceImpl implements TenantService {
         return tenant;
     }
 
+    /** 按租户 ID 加锁加载并校验启用状态。 */
     @Override
     public SystemTenant lockAndRequireEnabled(long tenantId) {
         SystemTenant tenant = tenantMapper.lockByIdForAuthentication(tenantId);

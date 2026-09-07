@@ -33,11 +33,13 @@ public class RedisLoginFailureService implements LoginFailureService {
     private final StringRedisTemplate redisTemplate;
     private final AuthProperties properties;
 
+    /** 创建登录失败服务并注入 Redis 访问及认证配置。 */
     public RedisLoginFailureService(StringRedisTemplate redisTemplate, AuthProperties properties) {
         this.redisTemplate = redisTemplate;
         this.properties = properties;
     }
 
+    /** 检查账号失败次数是否已达到锁定阈值。 */
     @Override
     public void assertAllowed(String tenantCode, String username) {
         String failures = redisTemplate.opsForValue().get(key(tenantCode, username));
@@ -53,6 +55,7 @@ public class RedisLoginFailureService implements LoginFailureService {
         }
     }
 
+    /** 原子记录登录失败并维护计数窗口及锁定期限。 */
     @Override
     public void recordFailure(String tenantCode, String username) {
         String failureWindowMillis = ttlMillis(
@@ -70,11 +73,13 @@ public class RedisLoginFailureService implements LoginFailureService {
         }
     }
 
+    /** 删除账号的登录失败计数及锁定状态。 */
     @Override
     public void clear(String tenantCode, String username) {
         redisTemplate.delete(key(tenantCode, username));
     }
 
+    /** 使用已标准化租户编码和用户名生成无歧义 Redis 键。 */
     private static String key(String tenantCode, String username) {
         String normalizedTenant = requireNormalized(tenantCode);
         String normalizedUsername = requireNormalized(username);
@@ -84,10 +89,12 @@ public class RedisLoginFailureService implements LoginFailureService {
                 + component(normalizedUsername);
     }
 
+    /** 将身份值编码为长度前缀组件以避免键碰撞。 */
     private static String component(String value) {
         return value.length() + ":" + value;
     }
 
+    /** 校验持续时间并转换为 Redis 使用的毫秒字符串。 */
     private static String ttlMillis(Duration ttl, String propertyName) {
         if (ttl == null) {
             throw new IllegalArgumentException(propertyName + " must be at least 1 millisecond");
@@ -104,6 +111,7 @@ public class RedisLoginFailureService implements LoginFailureService {
         return Long.toString(milliseconds);
     }
 
+    /** 校验身份值已经完成登录标准化。 */
     private static String requireNormalized(String value) {
         String normalized = IdentityNormalizer.normalizeForLogin(value)
                 .orElseThrow(() -> new IllegalArgumentException("identity must be valid normalized ASCII"));

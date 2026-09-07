@@ -53,6 +53,7 @@ public class RoleServiceImpl implements RoleService {
     private final SessionRevocationService sessionRevocationService;
     private final AuditorProvider auditorProvider;
 
+    /** 创建角色服务并注入角色、菜单、用户、会话及审计依赖。 */
     public RoleServiceImpl(
             SystemRoleMapper roleMapper,
             SystemUserRoleMapper userRoleMapper,
@@ -72,6 +73,7 @@ public class RoleServiceImpl implements RoleService {
         this.auditorProvider = auditorProvider;
     }
 
+    /** 分页查询当前租户角色并组装菜单授权信息。 */
     @Override
     public PageResult<RoleVO> page(RoleQueryDTO query) {
         long tenantId = TenantContextHolder.requireTenantId();
@@ -86,12 +88,14 @@ public class RoleServiceImpl implements RoleService {
         return PageResult.from(page, RoleVO::from);
     }
 
+    /** 获取当前租户内指定角色的详情。 */
     @Override
     public RoleVO get(long roleId) {
         long tenantId = TenantContextHolder.requireTenantId();
         return RoleVO.from(requireRole(tenantId, roleId));
     }
 
+    /** 创建租户角色，并校验角色编码唯一性。 */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public String create(CreateRoleDTO command) {
@@ -113,6 +117,7 @@ public class RoleServiceImpl implements RoleService {
         return role.getId().toString();
     }
 
+    /** 更新租户角色的名称与说明。 */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void update(long roleId, UpdateRoleDTO command) {
@@ -122,18 +127,21 @@ public class RoleServiceImpl implements RoleService {
         roleMapper.updateById(role);
     }
 
+    /** 启用指定租户角色。 */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void enable(long roleId) {
         changeStatus(TenantContextHolder.requireTenantId(), roleId, RoleStatus.ENABLED, false);
     }
 
+    /** 禁用指定角色，并保护内置角色及管理员不变量。 */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void disable(long roleId) {
         changeStatus(TenantContextHolder.requireTenantId(), roleId, RoleStatus.DISABLED, true);
     }
 
+    /** 删除未被用户引用的非内置角色。 */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void delete(long roleId) {
@@ -148,6 +156,7 @@ public class RoleServiceImpl implements RoleService {
         roleMapper.logicalDeleteWithAudit(tenantId, roleId, currentAuditorId(), LocalDateTime.now());
     }
 
+    /** 替换角色菜单授权，并使受影响用户会话失效。 */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void assignMenus(long roleId, Set<Long> menuIds) {
@@ -181,6 +190,7 @@ public class RoleServiceImpl implements RoleService {
         registerRevocationsAfterCommit(tenantId, userIds);
     }
 
+    /** 修改角色状态，并按需保护内置角色及撤销关联用户会话。 */
     private void changeStatus(long tenantId, long roleId, RoleStatus status, boolean protectBuiltInRole) {
         lockTenantForAdminInvariant(tenantId);
         SystemRole role = requireRole(tenantId, roleId);
@@ -196,6 +206,7 @@ public class RoleServiceImpl implements RoleService {
         }
     }
 
+    /** 加载租户内未删除角色，不存在时抛出业务异常。 */
     private SystemRole requireRole(long tenantId, long roleId) {
         SystemRole role = roleMapper.selectOne(Wrappers.<SystemRole>query().lambda()
                 .eq(SystemRole::getTenantId, tenantId)
@@ -207,12 +218,14 @@ public class RoleServiceImpl implements RoleService {
         return role;
     }
 
+    /** 阻止修改受保护的内置角色。 */
     private void assertNotProtected(SystemRole role) {
         if (Boolean.TRUE.equals(role.getBuiltIn()) || TENANT_ADMIN_ROLE_CODE.equals(role.getRoleCode())) {
             throw new BusinessException(RoleErrorCode.BUILT_IN_ROLE_PROTECTED);
         }
     }
 
+    /** 校验菜单 ID 集合完整且全部指向有效菜单资源。 */
     private void validateMenuIds(Set<Long> menuIds) {
         if (menuIds == null || menuIds.stream().anyMatch(menuId -> menuId == null || menuId <= 0)
                 || (!menuIds.isEmpty() && menuMapper.countEnabledByIds(menuIds) != menuIds.size())) {
@@ -220,14 +233,17 @@ public class RoleServiceImpl implements RoleService {
         }
     }
 
+    /** 锁定租户行以串行化管理员不变量检查。 */
     private void lockTenantForAdminInvariant(long tenantId) {
         tenantMapper.lockByIdForAdminInvariant(tenantId);
     }
 
+    /** 在事务提交后撤销所有受角色变更影响的用户会话。 */
     private void registerRevocationsAfterCommit(long tenantId, List<Long> userIds) {
         Set<Long> distinctUserIds = new LinkedHashSet<>(userIds);
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                /** 在数据库事务成功提交后批量执行会话撤销。 */
                 @Override
                 public void afterCommit() {
                     distinctUserIds.forEach(userId -> safelyRevoke(tenantId, userId));
@@ -238,6 +254,7 @@ public class RoleServiceImpl implements RoleService {
         distinctUserIds.forEach(userId -> safelyRevoke(tenantId, userId));
     }
 
+    /** 批量递增受角色变更影响用户的认证版本。 */
     private void incrementAffectedAuthVersions(long tenantId, List<Long> userIds) {
         List<Long> distinctUserIds = userIds.stream().distinct().toList();
         if (!distinctUserIds.isEmpty()) {
@@ -245,6 +262,7 @@ public class RoleServiceImpl implements RoleService {
         }
     }
 
+    /** 尽力撤销用户会话，并在存储异常时保留持久认证版本兜底。 */
     private void safelyRevoke(long tenantId, long userId) {
         try {
             sessionRevocationService.revokeAllUserSessions(tenantId, userId);
@@ -254,6 +272,7 @@ public class RoleServiceImpl implements RoleService {
         }
     }
 
+    /** 获取当前审计用户 ID，缺少认证主体时拒绝管理操作。 */
     private long currentAuditorId() {
         return auditorProvider.currentAuditorId()
                 .orElseThrow(() -> new IllegalStateException("Role management requires an authenticated auditor"));

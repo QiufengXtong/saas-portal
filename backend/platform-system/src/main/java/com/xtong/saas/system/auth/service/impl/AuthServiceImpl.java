@@ -60,6 +60,7 @@ public class AuthServiceImpl implements AuthService {
     private final AccessTokenService accessTokenService;
     private final AuthProperties authProperties;
 
+    /** 创建认证服务并注入租户、用户、权限、令牌及会话依赖。 */
     public AuthServiceImpl(
             TenantService tenantService,
             UserService userService,
@@ -85,6 +86,7 @@ public class AuthServiceImpl implements AuthService {
         this.authProperties = authProperties;
     }
 
+    /** 校验登录凭据、创建唯一会话并签发访问及刷新令牌。 */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public TokenResponse login(LoginRequest request) {
@@ -117,6 +119,7 @@ public class AuthServiceImpl implements AuthService {
         return tokenResponse(accessToken, created.refreshToken());
     }
 
+    /** 校验并原子轮换刷新令牌，同时签发新的访问令牌。 */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public TokenResponse refresh(RefreshTokenRequest request) {
@@ -155,11 +158,13 @@ public class AuthServiceImpl implements AuthService {
         return tokenResponse(accessToken, rotated.refreshToken());
     }
 
+    /** 删除指定会话以完成退出。 */
     @Override
     public void logout(String sessionId) {
         sessionStore.delete(sessionId);
     }
 
+    /** 校验当前认证主体与会话一致后返回用户信息。 */
     @Override
     public CurrentUserVO currentUser(AuthenticatedUser principal) {
         Objects.requireNonNull(principal, "principal must not be null");
@@ -174,6 +179,7 @@ public class AuthServiceImpl implements AuthService {
                 session.permissions());
     }
 
+    /** 加载可登录用户，并将账号不存在或禁用统一转换为凭据错误。 */
     private SystemUser requireLoginUser(
             long tenantId, String tenantCode, String username, String password) {
         try {
@@ -188,6 +194,7 @@ public class AuthServiceImpl implements AuthService {
         }
     }
 
+    /** 加载可登录租户，并将租户不存在或禁用统一转换为凭据错误。 */
     private SystemTenant requireLoginTenant(String tenantCode, String username, String password) {
         try {
             return tenantService.requireEnabledByCode(tenantCode);
@@ -201,6 +208,7 @@ public class AuthServiceImpl implements AuthService {
         }
     }
 
+    /** 在限定重试次数内创建 ID 唯一的会话及刷新令牌。 */
     private CreatedSession createUniqueSession(long tenantId, SystemUser user, Set<String> permissions) {
         for (int attempt = 0; attempt < SESSION_CREATION_ATTEMPTS; attempt++) {
             String sessionId = sessionIdGenerator.generate();
@@ -222,22 +230,26 @@ public class AuthServiceImpl implements AuthService {
         throw new BusinessException(CommonErrorCode.INTERNAL_ERROR);
     }
 
+    /** 执行固定哈希校验以降低账号枚举的时序差异。 */
     private void runDummyPasswordCheck(String password) {
         String boundedPassword = isBcryptPasswordLength(password) ? password : DUMMY_PASSWORD_INPUT;
         passwordEncoder.matches(boundedPassword, DUMMY_PASSWORD_HASH);
     }
 
+    /** 记录登录失败并构造统一的凭据错误。 */
     private BusinessException invalidCredentials(String tenantCode, String username) {
         loginFailureService.recordFailure(tenantCode, username);
         return new BusinessException(AuthErrorCode.INVALID_CREDENTIALS);
     }
 
+    /** 判断密码是否满足 BCrypt 的非空及 72 字节长度限制。 */
     private static boolean isBcryptPasswordLength(String password) {
         return password != null
                 && !password.isEmpty()
                 && password.getBytes(StandardCharsets.UTF_8).length <= 72;
     }
 
+    /** 组装包含有效期和令牌类型的认证响应。 */
     private TokenResponse tokenResponse(String accessToken, String refreshToken) {
         return new TokenResponse(
                 accessToken,
@@ -246,6 +258,7 @@ public class AuthServiceImpl implements AuthService {
                 authProperties.accessTokenTtl().toSeconds());
     }
 
+    /** 将会话转换为访问令牌使用的认证主体。 */
     private static AuthenticatedUser toPrincipal(AuthSession session) {
         return new AuthenticatedUser(
                 session.tenantId(),
@@ -255,6 +268,7 @@ public class AuthServiceImpl implements AuthService {
                 session.permissions());
     }
 
+    /** 判断认证主体的租户、用户、会话和用户名是否与会话完全一致。 */
     private static boolean hasSameIdentity(AuthSession session, AuthenticatedUser principal) {
         return session.tenantId() == principal.tenantId()
                 && session.userId() == principal.userId()
@@ -262,11 +276,13 @@ public class AuthServiceImpl implements AuthService {
                 && session.username().equals(principal.username());
     }
 
+    /** 注册事务回滚补偿，删除尚未正式生效的外部会话。 */
     private void registerRollbackCompensation(String sessionId) {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
             return;
         }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            /** 在事务未提交时删除已创建或轮换的会话。 */
             @Override
             public void afterCompletion(int status) {
                 if (status != TransactionSynchronization.STATUS_COMMITTED) {
