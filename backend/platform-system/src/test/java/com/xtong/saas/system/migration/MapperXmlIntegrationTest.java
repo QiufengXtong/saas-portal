@@ -100,13 +100,13 @@ class MapperXmlIntegrationTest {
     @Test
     void shouldLoadLockMapperStatements() {
         assertXmlStatement(SystemBootstrapLockMapper.class, "lockInitialization",
-                "mapper/system/bootstrap/SystemBootstrapLockMapper.xml");
+                "mapper/bootstrap/SystemBootstrapLockMapper.xml");
         assertXmlStatement(SystemTenantMapper.class, "lockByIdForAdminInvariant",
-                "mapper/system/tenant/SystemTenantMapper.xml");
+                "mapper/tenant/SystemTenantMapper.xml");
         assertXmlStatement(SystemTenantMapper.class, "lockByIdAndCodeForAuthentication",
-                "mapper/system/tenant/SystemTenantMapper.xml");
+                "mapper/tenant/SystemTenantMapper.xml");
         assertXmlStatement(SystemTenantMapper.class, "lockByIdForAuthentication",
-                "mapper/system/tenant/SystemTenantMapper.xml");
+                "mapper/tenant/SystemTenantMapper.xml");
     }
 
     @Test
@@ -144,12 +144,12 @@ class MapperXmlIntegrationTest {
     void shouldLoadUserAndRoleStatementsFromXml() {
         for (String method : List.of("countByTenantAndUsernameIncludingDeleted", "incrementAuthVersion",
                 "incrementAuthVersions", "logicalDeleteWithAudit")) {
-            assertXmlStatement(SystemUserMapper.class, method, "mapper/system/user/SystemUserMapper.xml");
+            assertXmlStatement(SystemUserMapper.class, method, "mapper/user/SystemUserMapper.xml");
         }
         for (String method : List.of("countByTenantAndCodeIncludingDeleted", "existsTenantAdminRole",
                 "countByTenantAndIds", "containsTenantAdminRole", "countEnabledTenantAdminUsers",
                 "logicalDeleteWithAudit")) {
-            assertXmlStatement(SystemRoleMapper.class, method, "mapper/system/role/SystemRoleMapper.xml");
+            assertXmlStatement(SystemRoleMapper.class, method, "mapper/role/SystemRoleMapper.xml");
         }
     }
 
@@ -370,14 +370,14 @@ class MapperXmlIntegrationTest {
 
     @Test
     void shouldLoadMenuAndRelationshipStatementsFromXml() {
-        assertXmlStatement(SystemMenuMapper.class, "countEnabledByIds", "mapper/system/menu/SystemMenuMapper.xml");
+        assertXmlStatement(SystemMenuMapper.class, "countEnabledByIds", "mapper/menu/SystemMenuMapper.xml");
         for (String method : List.of("selectRoleIdsByUserId", "deleteByUser", "countByRole",
                 "selectUserIdsByRole", "insertBatch")) {
-            assertXmlStatement(SystemUserRoleMapper.class, method, "mapper/system/role/SystemUserRoleMapper.xml");
+            assertXmlStatement(SystemUserRoleMapper.class, method, "mapper/role/SystemUserRoleMapper.xml");
         }
         for (String method : List.of("deleteByRole", "insertBatch", "selectMenuIdsByRole",
                 "selectEnabledPermissionCodesByRoleIds")) {
-            assertXmlStatement(SystemRoleMenuMapper.class, method, "mapper/system/role/SystemRoleMenuMapper.xml");
+            assertXmlStatement(SystemRoleMenuMapper.class, method, "mapper/role/SystemRoleMenuMapper.xml");
         }
     }
 

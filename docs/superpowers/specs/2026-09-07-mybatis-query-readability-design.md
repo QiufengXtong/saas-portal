@@ -57,7 +57,7 @@ Mapper Java 接口只保留方法签名和 Javadoc，不再包含 SQL 注解、�
 XML 统一放在 `platform-system` 资源目录：
 
 ```text
-backend/platform-system/src/main/resources/mapper/system/
+backend/platform-system/src/main/resources/mapper/
 ├── bootstrap/SystemBootstrapLockMapper.xml
 ├── menu/SystemMenuMapper.xml
 ├── role/SystemRoleMapper.xml

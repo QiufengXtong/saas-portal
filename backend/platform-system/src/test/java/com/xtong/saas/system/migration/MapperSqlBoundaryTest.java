@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class MapperSqlBoundaryTest {
 
     private static final Path MAIN_JAVA = Path.of("src/main/java");
-    private static final Path MAPPER_RESOURCES = Path.of("src/main/resources/mapper/system");
+    private static final Path MAPPER_RESOURCES = Path.of("src/main/resources/mapper");
     private static final Map<String, String> EXPECTED_MAPPERS = Map.of(
             "bootstrap/SystemBootstrapLockMapper.xml", "com.xtong.saas.system.bootstrap.mapper.SystemBootstrapLockMapper",
             "tenant/SystemTenantMapper.xml", "com.xtong.saas.system.tenant.mapper.SystemTenantMapper",

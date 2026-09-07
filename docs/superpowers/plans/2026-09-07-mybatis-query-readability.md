@@ -140,8 +140,8 @@ git commit -m "refactor: 使用Lambda Wrapper表达简单查询"
 **Files:**
 
 - Create: `backend/platform-system/src/test/java/com/xtong/saas/system/migration/MapperXmlIntegrationTest.java`
-- Create: `backend/platform-system/src/main/resources/mapper/system/bootstrap/SystemBootstrapLockMapper.xml`
-- Create: `backend/platform-system/src/main/resources/mapper/system/tenant/SystemTenantMapper.xml`
+- Create: `backend/platform-system/src/main/resources/mapper/bootstrap/SystemBootstrapLockMapper.xml`
+- Create: `backend/platform-system/src/main/resources/mapper/tenant/SystemTenantMapper.xml`
 - Modify: `backend/platform-system/src/main/java/com/xtong/saas/system/bootstrap/mapper/SystemBootstrapLockMapper.java`
 - Modify: `backend/platform-system/src/main/java/com/xtong/saas/system/tenant/mapper/SystemTenantMapper.java`
 - Modify: `backend/platform-boot/src/main/resources/application.yml`
@@ -238,7 +238,7 @@ Expected: XML statement 全部可调用，三个租户锁查询和 Bootstrap 锁
 - [ ] **Step 6: 提交锁查询迁移**
 
 ```powershell
-git add backend/platform-system/src/test/java/com/xtong/saas/system/migration/MapperXmlIntegrationTest.java backend/platform-system/src/main/resources/mapper/system/bootstrap/SystemBootstrapLockMapper.xml backend/platform-system/src/main/resources/mapper/system/tenant/SystemTenantMapper.xml backend/platform-system/src/main/java/com/xtong/saas/system/bootstrap/mapper/SystemBootstrapLockMapper.java backend/platform-system/src/main/java/com/xtong/saas/system/tenant/mapper/SystemTenantMapper.java backend/platform-boot/src/main/resources/application.yml
+git add backend/platform-system/src/test/java/com/xtong/saas/system/migration/MapperXmlIntegrationTest.java backend/platform-system/src/main/resources/mapper/bootstrap/SystemBootstrapLockMapper.xml backend/platform-system/src/main/resources/mapper/tenant/SystemTenantMapper.xml backend/platform-system/src/main/java/com/xtong/saas/system/bootstrap/mapper/SystemBootstrapLockMapper.java backend/platform-system/src/main/java/com/xtong/saas/system/tenant/mapper/SystemTenantMapper.java backend/platform-boot/src/main/resources/application.yml
 git commit -m "refactor: 迁移数据库锁查询至Mapper XML"
 ```
 
@@ -248,8 +248,8 @@ git commit -m "refactor: 迁移数据库锁查询至Mapper XML"
 
 **Files:**
 
-- Create: `backend/platform-system/src/main/resources/mapper/system/user/SystemUserMapper.xml`
-- Create: `backend/platform-system/src/main/resources/mapper/system/role/SystemRoleMapper.xml`
+- Create: `backend/platform-system/src/main/resources/mapper/user/SystemUserMapper.xml`
+- Create: `backend/platform-system/src/main/resources/mapper/role/SystemRoleMapper.xml`
 - Modify: `backend/platform-system/src/main/java/com/xtong/saas/system/user/mapper/SystemUserMapper.java`
 - Modify: `backend/platform-system/src/main/java/com/xtong/saas/system/role/mapper/SystemRoleMapper.java`
 - Modify: `backend/platform-system/src/test/java/com/xtong/saas/system/migration/MapperXmlIntegrationTest.java`
@@ -271,9 +271,9 @@ git commit -m "refactor: 迁移数据库锁查询至Mapper XML"
 class MapperAuditSqlTest {
     @Test
     void mapperXmlShouldWriteAuditColumns() throws IOException {
-        assertThat(read("mapper/system/user/SystemUserMapper.xml"))
+        assertThat(read("mapper/user/SystemUserMapper.xml"))
                 .contains("updated_by = #{auditorId}", "updated_at = #{updatedAt}");
-        assertThat(read("mapper/system/role/SystemRoleMapper.xml"))
+        assertThat(read("mapper/role/SystemRoleMapper.xml"))
                 .contains("updated_by = #{auditorId}", "updated_at = #{updatedAt}");
     }
 }
@@ -338,7 +338,7 @@ Expected: 所有用户/角色 XML 行为与审计检查通过。
 - [ ] **Step 7: 提交用户与角色 XML**
 
 ```powershell
-git add backend/platform-system/src/main/resources/mapper/system/user/SystemUserMapper.xml backend/platform-system/src/main/resources/mapper/system/role/SystemRoleMapper.xml backend/platform-system/src/main/java/com/xtong/saas/system/user/mapper/SystemUserMapper.java backend/platform-system/src/main/java/com/xtong/saas/system/role/mapper/SystemRoleMapper.java backend/platform-system/src/test/java/com/xtong/saas/system/migration/MapperXmlIntegrationTest.java backend/platform-system/src/test/java/com/xtong/saas/system/migration/MapperAuditSqlTest.java
+git add backend/platform-system/src/main/resources/mapper/user/SystemUserMapper.xml backend/platform-system/src/main/resources/mapper/role/SystemRoleMapper.xml backend/platform-system/src/main/java/com/xtong/saas/system/user/mapper/SystemUserMapper.java backend/platform-system/src/main/java/com/xtong/saas/system/role/mapper/SystemRoleMapper.java backend/platform-system/src/test/java/com/xtong/saas/system/migration/MapperXmlIntegrationTest.java backend/platform-system/src/test/java/com/xtong/saas/system/migration/MapperAuditSqlTest.java
 git commit -m "refactor: 迁移用户角色复杂SQL至XML"
 ```
 
@@ -348,9 +348,9 @@ git commit -m "refactor: 迁移用户角色复杂SQL至XML"
 
 **Files:**
 
-- Create: `backend/platform-system/src/main/resources/mapper/system/menu/SystemMenuMapper.xml`
-- Create: `backend/platform-system/src/main/resources/mapper/system/role/SystemRoleMenuMapper.xml`
-- Create: `backend/platform-system/src/main/resources/mapper/system/role/SystemUserRoleMapper.xml`
+- Create: `backend/platform-system/src/main/resources/mapper/menu/SystemMenuMapper.xml`
+- Create: `backend/platform-system/src/main/resources/mapper/role/SystemRoleMenuMapper.xml`
+- Create: `backend/platform-system/src/main/resources/mapper/role/SystemUserRoleMapper.xml`
 - Modify: `backend/platform-system/src/main/java/com/xtong/saas/system/menu/mapper/SystemMenuMapper.java`
 - Modify: `backend/platform-system/src/main/java/com/xtong/saas/system/role/mapper/SystemRoleMenuMapper.java`
 - Modify: `backend/platform-system/src/main/java/com/xtong/saas/system/role/mapper/SystemUserRoleMapper.java`
@@ -449,7 +449,7 @@ Expected: 集成、审计、静态分层及受影响业务测试全部通过；S
 - [ ] **Step 8: 提交关联 SQL 迁移**
 
 ```powershell
-git add backend/platform-system/src/main/resources/mapper/system/menu/SystemMenuMapper.xml backend/platform-system/src/main/resources/mapper/system/role/SystemRoleMenuMapper.xml backend/platform-system/src/main/resources/mapper/system/role/SystemUserRoleMapper.xml backend/platform-system/src/main/java/com/xtong/saas/system/menu/mapper/SystemMenuMapper.java backend/platform-system/src/main/java/com/xtong/saas/system/role/mapper/SystemRoleMenuMapper.java backend/platform-system/src/main/java/com/xtong/saas/system/role/mapper/SystemUserRoleMapper.java backend/platform-system/src/main/java/com/xtong/saas/system/role/service/impl/RoleServiceImpl.java backend/platform-system/src/main/java/com/xtong/saas/system/user/service/impl/UserServiceImpl.java backend/platform-system/src/main/java/com/xtong/saas/system/bootstrap/SystemBootstrapInitializer.java backend/platform-system/src/test/java/com/xtong/saas/system/migration/MapperXmlIntegrationTest.java backend/platform-system/src/test/java/com/xtong/saas/system/migration/MapperAuditSqlTest.java backend/platform-system/src/test/java/com/xtong/saas/system/migration/MapperSqlBoundaryTest.java
+git add backend/platform-system/src/main/resources/mapper/menu/SystemMenuMapper.xml backend/platform-system/src/main/resources/mapper/role/SystemRoleMenuMapper.xml backend/platform-system/src/main/resources/mapper/role/SystemUserRoleMapper.xml backend/platform-system/src/main/java/com/xtong/saas/system/menu/mapper/SystemMenuMapper.java backend/platform-system/src/main/java/com/xtong/saas/system/role/mapper/SystemRoleMenuMapper.java backend/platform-system/src/main/java/com/xtong/saas/system/role/mapper/SystemUserRoleMapper.java backend/platform-system/src/main/java/com/xtong/saas/system/role/service/impl/RoleServiceImpl.java backend/platform-system/src/main/java/com/xtong/saas/system/user/service/impl/UserServiceImpl.java backend/platform-system/src/main/java/com/xtong/saas/system/bootstrap/SystemBootstrapInitializer.java backend/platform-system/src/test/java/com/xtong/saas/system/migration/MapperXmlIntegrationTest.java backend/platform-system/src/test/java/com/xtong/saas/system/migration/MapperAuditSqlTest.java backend/platform-system/src/test/java/com/xtong/saas/system/migration/MapperSqlBoundaryTest.java
 git commit -m "refactor: 迁移菜单关联SQL至XML"
 ```
 
@@ -491,7 +491,7 @@ Expected: `BUILD SUCCESS`；不启动 Docker、MySQL 或 Redis。
 ```powershell
 rg -n "org\.apache\.ibatis\.annotations\.(Select|Insert|Update|Delete)(Provider)?|<script>" backend/platform-system/src/main/java
 rg -n "new QueryWrapper|\.eq\(\"|\.like\([^,]+, \"|\.orderByAsc\(\"" backend/platform-system/src/main/java
-rg --files backend/platform-system/src/main/resources/mapper/system
+rg --files backend/platform-system/src/main/resources/mapper
 git diff --check
 git status --short
 ```
@@ -506,10 +506,10 @@ Expected:
 - [ ] **Step 5: 检查 XML 打包结果**
 
 ```powershell
-jar tf backend/platform-system/target/platform-system-1.0.0-SNAPSHOT.jar | Select-String "mapper/system/.+Mapper.xml"
+jar tf backend/platform-system/target/platform-system-1.0.0-SNAPSHOT.jar | Select-String "mapper/.+Mapper.xml"
 ```
 
-Expected: 七个 XML 都位于构建产物的 `mapper/system/**` 下。
+Expected: 七个 XML 都位于构建产物的 `mapper/**` 下。
 
 - [ ] **Step 6: 如验证阶段产生修复则单独提交**
 
