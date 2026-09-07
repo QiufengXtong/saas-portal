@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 文件作用：保存租户目录中带数据库行锁语义的复杂查询。 -->
+<mapper namespace="com.xtong.saas.system.tenant.mapper.SystemTenantMapper">
+    <!-- 锁定指定未删除租户，串行化管理员不变量检查。 -->
+    <select id="lockByIdForAdminInvariant" resultType="java.lang.Long">
+        SELECT id FROM sys_tenant
+        WHERE id = #{tenantId} AND deleted = 0
+        FOR UPDATE
+    </select>
+    <!-- 按租户 ID 和标准化编码锁定未删除租户，用于登录。 -->
+    <select id="lockByIdAndCodeForAuthentication"
+            resultType="com.xtong.saas.system.tenant.entity.SystemTenant">
+        SELECT * FROM sys_tenant
+        WHERE id = #{tenantId} AND tenant_code = #{tenantCode} AND deleted = 0
+        FOR UPDATE
+    </select>
+    <!-- 按租户 ID 锁定未删除租户，用于刷新认证。 -->
+    <select id="lockByIdForAuthentication"
+            resultType="com.xtong.saas.system.tenant.entity.SystemTenant">
+        SELECT * FROM sys_tenant
+        WHERE id = #{tenantId} AND deleted = 0
+        FOR UPDATE
+    </select>
+</mapper>

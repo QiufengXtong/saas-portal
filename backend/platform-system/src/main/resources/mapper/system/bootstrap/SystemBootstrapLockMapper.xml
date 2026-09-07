@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 文件作用：保存首租户初始化所需的数据库级全局行锁查询。 -->
+<mapper namespace="com.xtong.saas.system.bootstrap.mapper.SystemBootstrapLockMapper">
+    <!-- 锁定固定初始化行，串行化空库检查与首租户创建。 -->
+    <select id="lockInitialization" resultType="java.lang.Long">
+        SELECT id FROM sys_bootstrap_lock WHERE id = 1 FOR UPDATE
+    </select>
+</mapper>
