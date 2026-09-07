@@ -20,16 +20,31 @@ public class MenuController {
 
     private final MenuService menuService;
 
+    /**
+     * 创建菜单查询控制器。
+     *
+     * @param menuService 菜单目录领域服务
+     */
     public MenuController(MenuService menuService) {
         this.menuService = menuService;
     }
 
+    /**
+     * 查询启用状态的全局菜单树。
+     *
+     * @return 按层级和顺序组织的菜单树
+     */
     @GetMapping("/tree")
     @PreAuthorize("hasAuthority('system:menu:tree')")
     public Result<List<MenuTreeNodeVO>> tree() {
         return Result.success(menuService.getTree());
     }
 
+    /**
+     * 查询系统定义的有效权限码集合。
+     *
+     * @return 有效权限码集合
+     */
     @GetMapping("/permissions")
     @PreAuthorize("hasAuthority('system:permission:list')")
     public Result<Set<String>> permissions() {
