@@ -103,6 +103,17 @@ class RoleServiceTest {
     }
 
     @Test
+    void shouldLoadRoleMenuIdsWithinCurrentTenant() {
+        when(roleMapper.selectOne(any())).thenReturn(role(8L, false));
+        when(roleMenuMapper.selectMenuIdsByRole(1L, 8L)).thenReturn(List.of(101L, 102L));
+
+        List<String> menuIds = TenantScope.call(1L, () -> service.getMenuIds(8L));
+
+        assertThat(menuIds).containsExactly("101", "102");
+        verify(roleMenuMapper).selectMenuIdsByRole(1L, 8L);
+    }
+
+    @Test
     void shouldRejectMutatingBuiltInRole() {
         when(roleMapper.selectOne(any())).thenReturn(role(8L, true));
 

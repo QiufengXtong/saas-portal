@@ -95,6 +95,16 @@ public class RoleServiceImpl implements RoleService {
         return RoleVO.from(requireRole(tenantId, roleId));
     }
 
+    /** 获取当前租户指定角色已授权的菜单 ID 列表。 */
+    @Override
+    public List<String> getMenuIds(long roleId) {
+        long tenantId = TenantContextHolder.requireTenantId();
+        requireRole(tenantId, roleId);
+        return roleMenuMapper.selectMenuIdsByRole(tenantId, roleId).stream()
+                .map(String::valueOf)
+                .toList();
+    }
+
     /** 创建租户角色，并校验角色编码唯一性。 */
     @Override
     @Transactional(rollbackFor = Exception.class)

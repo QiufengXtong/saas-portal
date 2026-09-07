@@ -30,14 +30,17 @@ class RoleControllerTest {
         PageResult<RoleVO> page = new PageResult<>(List.of(), 0, 1, 20);
         when(roleService.page(query)).thenReturn(page);
         when(roleService.create(new CreateRoleDTO("OPERATOR", "Operator"))).thenReturn("201");
+        when(roleService.getMenuIds(9L)).thenReturn(List.of("2", "3"));
 
         Result<PageResult<RoleVO>> pageResult = controller.page(query);
         Result<String> createResult = controller.create(new CreateRoleDTO("OPERATOR", "Operator"));
+        Result<List<String>> menuIdsResult = controller.menuIds(9L);
         controller.update(9L, new UpdateRoleDTO("Updated"));
         controller.assignMenus(9L, new AssignRoleMenusDTO(Set.of(2L, 3L)));
 
         assertThat(pageResult).isEqualTo(Result.success(page));
         assertThat(createResult).isEqualTo(Result.success("201"));
+        assertThat(menuIdsResult).isEqualTo(Result.success(List.of("2", "3")));
         verify(roleService).update(9L, new UpdateRoleDTO("Updated"));
         verify(roleService).assignMenus(9L, Set.of(2L, 3L));
     }

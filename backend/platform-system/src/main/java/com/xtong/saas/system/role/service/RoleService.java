@@ -7,6 +7,7 @@ import com.xtong.saas.system.role.dto.UpdateRoleDTO;
 import com.xtong.saas.system.role.vo.RoleVO;
 
 import java.util.Set;
+import java.util.List;
 
 /** 定义当前受信租户内的角色管理和全局菜单授权业务边界。 */
 public interface RoleService {
@@ -16,6 +17,9 @@ public interface RoleService {
 
     /** 获取当前租户内指定角色的详情。 */
     RoleVO get(long roleId);
+
+    /** 获取当前租户内指定角色已授权的菜单 ID。 */
+    List<String> getMenuIds(long roleId);
 
     /** 在当前租户内创建角色并返回角色 ID。 */
     String create(CreateRoleDTO command);

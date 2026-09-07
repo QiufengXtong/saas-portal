@@ -1,3 +1,4 @@
+<!-- 文件作用：保留用于独立排查基础设施连接状态的健康检查视图。 -->
 <script lang="ts" setup>
 import {computed, onMounted, ref} from 'vue'
 
@@ -46,8 +47,8 @@ onMounted(loadHealth)
 <template>
   <main class="home-page">
     <el-card
-        class="status-card"
-        shadow="never"
+      class="status-card"
+      shadow="never"
     >
       <template #header>
         <div class="card-header">
@@ -61,9 +62,9 @@ onMounted(loadHealth)
             </p>
           </div>
           <el-button
-              :loading="loading"
-              type="primary"
-              @click="loadHealth"
+            :loading="loading"
+            type="primary"
+            @click="loadHealth"
           >
             刷新状态
           </el-button>
@@ -71,8 +72,8 @@ onMounted(loadHealth)
       </template>
 
       <div
-          aria-live="polite"
-          class="status-list"
+        aria-live="polite"
+        class="status-list"
       >
         <div class="status-row">
           <span>后端应用</span>
@@ -95,12 +96,12 @@ onMounted(loadHealth)
       </div>
 
       <el-alert
-          v-if="!isReachable"
-          :closable="false"
-          class="status-alert"
-          show-icon
-          title="无法连接后端服务，请确认后端已在 8080 端口启动。"
-          type="warning"
+        v-if="!isReachable"
+        :closable="false"
+        class="status-alert"
+        show-icon
+        title="无法连接后端服务，请确认后端已在 8080 端口启动。"
+        type="warning"
       />
     </el-card>
   </main>

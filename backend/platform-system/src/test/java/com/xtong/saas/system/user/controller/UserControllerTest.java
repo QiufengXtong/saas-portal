@@ -315,6 +315,7 @@ class UserControllerTest {
                 endpoint(HttpMethod.PUT, "/api/v1/system/users/1/roles", "{\"roleIds\":[]}", "system:user:assign-role"),
                 endpoint(HttpMethod.GET, "/api/v1/system/roles?pageNum=1&pageSize=20", null, "system:role:list"),
                 endpoint(HttpMethod.GET, "/api/v1/system/roles/1", null, "system:role:detail"),
+                endpoint(HttpMethod.GET, "/api/v1/system/roles/1/menus", null, "system:role:detail"),
                 endpoint(HttpMethod.POST, "/api/v1/system/roles", "{\"roleCode\":\"OPERATOR\",\"roleName\":\"Operator\"}", "system:role:create"),
                 endpoint(HttpMethod.PUT, "/api/v1/system/roles/1", "{\"roleName\":\"Operator\"}", "system:role:update"),
                 endpoint(HttpMethod.POST, "/api/v1/system/roles/1/enable", null, "system:role:enable"),

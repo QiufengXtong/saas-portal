@@ -2,7 +2,7 @@
 
 # saas-portal
 
-`saas-portal` 是一个前后端分离的 SaaS 平台基础骨架。后端已提供多租户 System IAM 基础能力，包括首租户初始化、用户与角色管理、菜单权限目录、JWT 访问令牌及 Redis 刷新会话。
+`saas-portal` 是一个前后端分离的 SaaS 平台。当前已提供多租户 System IAM 管理闭环，包括首租户初始化、登录与会话刷新、权限路由、用户与角色管理、菜单授权及 Redis 会话即时失效。
 
 ## 技术栈
 
@@ -134,6 +134,8 @@ GET  /api/v1/auth/me       读取当前用户
 /api/v1/system/menus       菜单树和权限码目录
 ```
 
+角色菜单采用整体替换语义，前端通过 `GET /api/v1/system/roles/{id}/menus` 读取现有授权后再提交。登录令牌保存在当前标签页的 `sessionStorage`，关闭标签页后自动清除；访问令牌过期时，统一请求层会单飞轮换 Refresh Token 并重放等待中的请求。
+
 访问认证接口时使用 HTTP 请求头 `Authorization: Bearer <access-token>`；示例中的 `<access-token>` 是占位符。刷新令牌按会话在 Redis 中保存摘要并轮换，支持同一用户多设备登录。用户状态、密码或权限变化会递增数据库认证版本；即使 Redis 清理暂时失败，旧会话也会在请求和刷新时被拒绝。权限码采用 `领域:资源:动作` 格式，例如 `system:user:list`；内置 `TENANT_ADMIN` 角色拥有全部已启用权限，其他角色通过菜单关联获得权限。
 
 ## Docker Compose 启动
@@ -154,7 +156,7 @@ docker compose up --build
 GET /api/v1/health
 ```
 
-欢迎页通过该接口展示：
+健康接口状态含义：
 
 - `UP`：应用及所检查组件可用；
 - `DOWN`：后端可访问，但 MySQL、Redis 或其他必要组件不可用；

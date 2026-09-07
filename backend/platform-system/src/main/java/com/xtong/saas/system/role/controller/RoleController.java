@@ -13,6 +13,8 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 /** 暴露当前受信租户内角色查询、维护和全局菜单授权的 HTTP API。 */
 @Validated
 @RestController
@@ -52,6 +54,18 @@ public class RoleController {
     @PreAuthorize("hasAuthority('system:role:detail')")
     public Result<RoleVO> get(@PathVariable long id) {
         return Result.success(roleService.get(id));
+    }
+
+    /**
+     * 查询当前租户内指定角色已授权的菜单 ID。
+     *
+     * @param id 角色 ID
+     * @return 已授权菜单 ID 字符串列表
+     */
+    @GetMapping("/{id}/menus")
+    @PreAuthorize("hasAuthority('system:role:detail')")
+    public Result<List<String>> menuIds(@PathVariable long id) {
+        return Result.success(roleService.getMenuIds(id));
     }
 
     /**
