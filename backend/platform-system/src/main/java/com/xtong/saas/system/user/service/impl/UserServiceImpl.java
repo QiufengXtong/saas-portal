@@ -223,9 +223,9 @@ public class UserServiceImpl implements UserService {
         revokeAfterCommit(tenantId, userId);
     }
 
-    /** 在指定租户作用域内加载并校验可登录用户。 */
+    /** 在指定租户作用域内加载未删除用户，保留状态供认证服务安全判断。 */
     @Override
-    public SystemUser requireEnabledForLogin(long tenantId, String username) {
+    public SystemUser requireForLogin(long tenantId, String username) {
         return TenantScope.call(tenantId, () -> {
             SystemUser user = userMapper.selectOne(Wrappers.<SystemUser>query().lambda()
                     .eq(SystemUser::getTenantId, tenantId)
@@ -233,9 +233,6 @@ public class UserServiceImpl implements UserService {
                     .eq(SystemUser::getDeleted, false));
             if (user == null) {
                 throw new BusinessException(UserErrorCode.USER_NOT_FOUND);
-            }
-            if (user.getStatus() != UserStatus.ENABLED) {
-                throw new BusinessException(UserErrorCode.USER_DISABLED);
             }
             return user;
         });

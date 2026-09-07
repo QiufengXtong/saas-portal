@@ -41,8 +41,8 @@ public interface UserService {
     /** 替换指定用户的全部角色授权。 */
     void assignRoles(long userId, Set<Long> roleIds);
 
-    /** 按租户和用户名加载可登录的启用用户。 */
-    SystemUser requireEnabledForLogin(long tenantId, String username);
+    /** 按租户和用户名加载未删除用户，由认证服务在密码校验后判断状态。 */
+    SystemUser requireForLogin(long tenantId, String username);
 
     /** 按租户和用户 ID 加载可继续使用会话的启用用户。 */
     SystemUser requireEnabledForSession(long tenantId, long userId);

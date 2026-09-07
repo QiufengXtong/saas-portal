@@ -322,13 +322,13 @@ class UserServiceTest {
     }
 
     @Test
-    void shouldRejectLoginForDisabledUser() {
-        when(userMapper.selectOne(any())).thenReturn(user(10L, UserStatus.DISABLED));
+    void shouldReturnDisabledUserForPasswordVerificationBeforeStatusDisclosure() {
+        SystemUser disabled = user(10L, UserStatus.DISABLED);
+        when(userMapper.selectOne(any())).thenReturn(disabled);
 
-        assertThatThrownBy(() -> service.requireEnabledForLogin(1L, "alice"))
-                .isInstanceOf(BusinessException.class)
-                .extracting(exception -> ((BusinessException) exception).getErrorCode())
-                .isEqualTo(UserErrorCode.USER_DISABLED);
+        SystemUser result = service.requireForLogin(1L, "alice");
+
+        assertThat(result).isSameAs(disabled);
     }
 
     @Test

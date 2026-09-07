@@ -109,7 +109,7 @@ class AuthServiceTest {
         SystemTenant tenant = enabledTenant(11L);
         SystemUser user = enabledUser(22L, "admin", "System Admin", "encoded");
         when(tenantService.requireEnabledByCode("default")).thenReturn(tenant);
-        when(userService.requireEnabledForLogin(11L, "admin")).thenReturn(user);
+        when(userService.requireForLogin(11L, "admin")).thenReturn(user);
         when(passwordEncoder.matches(" Secret123 ", "encoded")).thenReturn(true);
         when(permissionService.loadUserPermissions(11L, 22L)).thenReturn(Set.of("system:user:list"));
         when(sessionIdGenerator.generate()).thenReturn("session-1");
@@ -127,7 +127,7 @@ class AuthServiceTest {
         order.verify(tenantService).requireEnabledByCode("default");
         order.verify(tenantService).lockAndRequireEnabled(11L, "default");
         order.verify(loginFailureService).assertAllowed("default", "admin");
-        order.verify(userService).requireEnabledForLogin(11L, "admin");
+        order.verify(userService).requireForLogin(11L, "admin");
         order.verify(passwordEncoder).matches(" Secret123 ", "encoded");
         order.verify(permissionService).loadUserPermissions(11L, 22L);
         verify(loginFailureService).clear("default", "admin");
@@ -216,7 +216,7 @@ class AuthServiceTest {
     @Test
     void shouldHideUnknownUserBehindInvalidCredentialsAndRecordFailure() {
         when(tenantService.requireEnabledByCode("default")).thenReturn(enabledTenant(11L));
-        when(userService.requireEnabledForLogin(11L, "missing"))
+        when(userService.requireForLogin(11L, "missing"))
                 .thenThrow(new BusinessException(UserErrorCode.USER_NOT_FOUND));
         when(passwordEncoder.matches(eq("Secret123"), any())).thenReturn(false);
 
@@ -272,7 +272,7 @@ class AuthServiceTest {
     @Test
     void shouldHideWrongPasswordBehindSameInvalidCredentialsAndRecordFailure() {
         when(tenantService.requireEnabledByCode("default")).thenReturn(enabledTenant(11L));
-        when(userService.requireEnabledForLogin(11L, "admin"))
+        when(userService.requireForLogin(11L, "admin"))
                 .thenReturn(enabledUser(22L, "admin", "Admin", "encoded"));
         when(passwordEncoder.matches("wrong-password", "encoded")).thenReturn(false);
 
@@ -285,7 +285,7 @@ class AuthServiceTest {
     }
 
     @Test
-    void shouldHideDisabledTenantAndUserBehindInvalidCredentialsWithDummyPasswordWork() {
+    void shouldHideDisabledTenantBehindInvalidCredentialsWithDummyPasswordWork() {
         when(tenantService.requireEnabledByCode("disabled"))
                 .thenThrow(new BusinessException(TenantErrorCode.TENANT_DISABLED));
         when(passwordEncoder.matches(eq("Secret123"), any())).thenReturn(false);
@@ -296,17 +296,38 @@ class AuthServiceTest {
                 .isEqualTo(AuthErrorCode.INVALID_CREDENTIALS);
         verify(loginFailureService).recordFailure("disabled", "admin");
         verify(passwordEncoder).matches(eq("Secret123"), any());
+    }
 
+    @Test
+    void shouldDiscloseDisabledUserOnlyAfterCorrectPassword() {
+        SystemUser disabled = enabledUser(22L, "disabled", "Disabled User", "encoded");
+        disabled.setStatus(UserStatus.DISABLED);
         when(tenantService.requireEnabledByCode("default")).thenReturn(enabledTenant(11L));
-        when(userService.requireEnabledForLogin(11L, "disabled"))
-                .thenThrow(new BusinessException(UserErrorCode.USER_DISABLED));
+        when(userService.requireForLogin(11L, "disabled")).thenReturn(disabled);
+        when(passwordEncoder.matches("Secret123", "encoded")).thenReturn(true);
 
         assertThatThrownBy(() -> authService.login(new LoginRequest("default", "disabled", "Secret123")))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
+                .isEqualTo(UserErrorCode.USER_DISABLED);
+        verify(loginFailureService, never()).recordFailure("default", "disabled");
+        verifyNoInteractions(permissionService, sessionStore);
+    }
+
+    @Test
+    void shouldHideDisabledUserBehindInvalidCredentialsWhenPasswordIsWrong() {
+        SystemUser disabled = enabledUser(22L, "disabled", "Disabled User", "encoded");
+        disabled.setStatus(UserStatus.DISABLED);
+        when(tenantService.requireEnabledByCode("default")).thenReturn(enabledTenant(11L));
+        when(userService.requireForLogin(11L, "disabled")).thenReturn(disabled);
+        when(passwordEncoder.matches("wrong-password", "encoded")).thenReturn(false);
+
+        assertThatThrownBy(() -> authService.login(new LoginRequest("default", "disabled", "wrong-password")))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
                 .isEqualTo(AuthErrorCode.INVALID_CREDENTIALS);
         verify(loginFailureService).recordFailure("default", "disabled");
-        verify(passwordEncoder, times(2)).matches(eq("Secret123"), any());
+        verifyNoInteractions(permissionService, sessionStore);
     }
 
     @Test
@@ -459,7 +480,7 @@ class AuthServiceTest {
 
     private void stubSuccessfulIdentity() {
         when(tenantService.requireEnabledByCode("default")).thenReturn(enabledTenant(11L));
-        when(userService.requireEnabledForLogin(11L, "admin"))
+        when(userService.requireForLogin(11L, "admin"))
                 .thenReturn(enabledUser(22L, "admin", "Admin", "encoded"));
         when(passwordEncoder.matches("Secret123", "encoded")).thenReturn(true);
         when(permissionService.loadUserPermissions(11L, 22L)).thenReturn(Set.of());

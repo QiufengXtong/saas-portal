@@ -23,6 +23,7 @@ import com.xtong.saas.system.tenant.entity.SystemTenant;
 import com.xtong.saas.system.tenant.exception.TenantErrorCode;
 import com.xtong.saas.system.tenant.service.TenantService;
 import com.xtong.saas.system.user.entity.SystemUser;
+import com.xtong.saas.system.user.enums.UserStatus;
 import com.xtong.saas.system.user.exception.UserErrorCode;
 import com.xtong.saas.system.user.service.UserService;
 import com.xtong.saas.system.identity.IdentityNormalizer;
@@ -108,6 +109,9 @@ public class AuthServiceImpl implements AuthService {
             if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
                 throw invalidCredentials(tenantCode, username);
             }
+            if (user.getStatus() != UserStatus.ENABLED) {
+                throw new BusinessException(UserErrorCode.USER_DISABLED);
+            }
             Set<String> permissions = permissionService.loadUserPermissions(tenant.getId(), user.getId());
             CreatedSession result = createUniqueSession(tenant.getId(), user, permissions);
             registerRollbackCompensation(result.session().sessionId());
@@ -179,14 +183,13 @@ public class AuthServiceImpl implements AuthService {
                 session.permissions());
     }
 
-    /** 加载可登录用户，并将账号不存在或禁用统一转换为凭据错误。 */
+    /** 加载未删除用户，并将账号不存在转换为统一凭据错误。 */
     private SystemUser requireLoginUser(
             long tenantId, String tenantCode, String username, String password) {
         try {
-            return userService.requireEnabledForLogin(tenantId, username);
+            return userService.requireForLogin(tenantId, username);
         } catch (BusinessException exception) {
-            if (exception.getErrorCode() != UserErrorCode.USER_NOT_FOUND
-                    && exception.getErrorCode() != UserErrorCode.USER_DISABLED) {
+            if (exception.getErrorCode() != UserErrorCode.USER_NOT_FOUND) {
                 throw exception;
             }
             runDummyPasswordCheck(password);
