@@ -2,6 +2,8 @@ package com.xtong.saas.system.menu.service;
 
 import com.baomidou.mybatisplus.core.conditions.AbstractWrapper;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.xtong.saas.system.menu.dto.MenuTreeNodeVO;
 import com.xtong.saas.system.menu.entity.SystemMenu;
 import com.xtong.saas.system.menu.enums.MenuStatus;
@@ -9,6 +11,8 @@ import com.xtong.saas.system.menu.enums.MenuType;
 import com.xtong.saas.system.menu.mapper.SystemMenuMapper;
 import com.xtong.saas.system.menu.service.impl.MenuServiceImpl;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeAll;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.mockito.ArgumentCaptor;
 
 import java.util.List;
@@ -26,6 +30,12 @@ class MenuServiceTest {
 
     private final SystemMenuMapper menuMapper = mock(SystemMenuMapper.class);
     private final MenuService service = new MenuServiceImpl(menuMapper);
+
+    /** 为直接检查 Lambda Wrapper SQL 的单测初始化菜单实体元数据。 */
+    @BeforeAll
+    static void initializeMenuTableInfo() {
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), SystemMenu.class);
+    }
 
     @Test
     void shouldBuildStableTreeBySortOrder() {

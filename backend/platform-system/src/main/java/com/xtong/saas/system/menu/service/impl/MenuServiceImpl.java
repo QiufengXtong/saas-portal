@@ -1,6 +1,6 @@
 package com.xtong.saas.system.menu.service.impl;
 
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.xtong.saas.system.menu.dto.MenuTreeNodeVO;
 import com.xtong.saas.system.menu.entity.SystemMenu;
 import com.xtong.saas.system.menu.enums.MenuStatus;
@@ -73,11 +73,11 @@ public class MenuServiceImpl implements MenuService {
     }
 
     private List<SystemMenu> loadEnabledMenus() {
-        List<SystemMenu> menus = menuMapper.selectList(new QueryWrapper<SystemMenu>()
-                .eq("deleted", false)
-                .eq("status", MenuStatus.ENABLED)
-                .orderByAsc("sort_order")
-                .orderByAsc("id"));
+        List<SystemMenu> menus = menuMapper.selectList(Wrappers.<SystemMenu>query().lambda()
+                .eq(SystemMenu::getDeleted, false)
+                .eq(SystemMenu::getStatus, MenuStatus.ENABLED)
+                .orderByAsc(SystemMenu::getSortOrder)
+                .orderByAsc(SystemMenu::getId));
         return menus.stream()
                 .filter(menu -> !Boolean.TRUE.equals(menu.getDeleted()))
                 .filter(menu -> menu.getStatus() == MenuStatus.ENABLED)

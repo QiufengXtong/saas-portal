@@ -23,9 +23,9 @@ public class TenantServiceImpl implements TenantService {
     @Override
     public SystemTenant requireEnabledByCode(String tenantCode) {
         String normalizedCode = IdentityNormalizer.requireManagement(tenantCode);
-        SystemTenant tenant = tenantMapper.selectOne(Wrappers.<SystemTenant>query()
-                .eq("tenant_code", normalizedCode)
-                .eq("deleted", false));
+        SystemTenant tenant = tenantMapper.selectOne(Wrappers.<SystemTenant>query().lambda()
+                .eq(SystemTenant::getTenantCode, normalizedCode)
+                .eq(SystemTenant::getDeleted, false));
         if (tenant == null) {
             throw new BusinessException(TenantErrorCode.TENANT_NOT_FOUND);
         }
@@ -37,8 +37,8 @@ public class TenantServiceImpl implements TenantService {
 
     @Override
     public boolean hasAnyTenant() {
-        return tenantMapper.selectCount(Wrappers.<SystemTenant>query()
-                .eq("deleted", false)) > 0;
+        return tenantMapper.selectCount(Wrappers.<SystemTenant>query().lambda()
+                .eq(SystemTenant::getDeleted, false)) > 0;
     }
 
     @Override

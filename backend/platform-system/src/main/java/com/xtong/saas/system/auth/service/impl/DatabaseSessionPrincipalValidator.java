@@ -20,10 +20,10 @@ public class DatabaseSessionPrincipalValidator implements SessionPrincipalValida
 
     @Override
     public boolean isValid(AuthSession session) {
-        SystemUser user = userMapper.selectOne(Wrappers.<SystemUser>query()
-                .eq("tenant_id", session.tenantId())
-                .eq("id", session.userId())
-                .eq("deleted", false));
+        SystemUser user = userMapper.selectOne(Wrappers.<SystemUser>query().lambda()
+                .eq(SystemUser::getTenantId, session.tenantId())
+                .eq(SystemUser::getId, session.userId())
+                .eq(SystemUser::getDeleted, false));
         long version = user == null || user.getAuthVersion() == null ? -1L : user.getAuthVersion();
         return user != null && user.getStatus() == UserStatus.ENABLED && version == session.authVersion();
     }

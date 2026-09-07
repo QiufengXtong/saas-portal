@@ -74,13 +74,13 @@ public class RoleServiceImpl implements RoleService {
     public PageResult<RoleVO> page(RoleQueryDTO query) {
         long tenantId = TenantContextHolder.requireTenantId();
         Page<SystemRole> page = roleMapper.selectPage(new Page<>(query.pageNum(), query.pageSize()),
-                Wrappers.<SystemRole>query()
-                        .eq("tenant_id", tenantId)
-                        .eq("deleted", false)
-                        .like(query.roleCode() != null && !query.roleCode().isBlank(), "role_code", query.roleCode())
-                        .like(query.roleName() != null && !query.roleName().isBlank(), "role_name", query.roleName())
-                        .eq(query.status() != null, "status", query.status())
-                        .orderByAsc("id"));
+                Wrappers.<SystemRole>query().lambda()
+                        .eq(SystemRole::getTenantId, tenantId)
+                        .eq(SystemRole::getDeleted, false)
+                        .like(query.roleCode() != null && !query.roleCode().isBlank(), SystemRole::getRoleCode, query.roleCode())
+                        .like(query.roleName() != null && !query.roleName().isBlank(), SystemRole::getRoleName, query.roleName())
+                        .eq(query.status() != null, SystemRole::getStatus, query.status())
+                        .orderByAsc(SystemRole::getId));
         return PageResult.from(page, RoleVO::from);
     }
 
@@ -183,10 +183,10 @@ public class RoleServiceImpl implements RoleService {
     }
 
     private SystemRole requireRole(long tenantId, long roleId) {
-        SystemRole role = roleMapper.selectOne(Wrappers.<SystemRole>query()
-                .eq("tenant_id", tenantId)
-                .eq("id", roleId)
-                .eq("deleted", false));
+        SystemRole role = roleMapper.selectOne(Wrappers.<SystemRole>query().lambda()
+                .eq(SystemRole::getTenantId, tenantId)
+                .eq(SystemRole::getId, roleId)
+                .eq(SystemRole::getDeleted, false));
         if (role == null || role.getTenantId() == null || role.getTenantId() != tenantId) {
             throw new BusinessException(RoleErrorCode.ROLE_NOT_FOUND);
         }

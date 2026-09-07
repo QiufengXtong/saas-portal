@@ -70,12 +70,12 @@ public class UserServiceImpl implements UserService {
     public PageResult<UserVO> page(UserQueryDTO query) {
         long tenantId = TenantContextHolder.requireTenantId();
         Page<SystemUser> page = userMapper.selectPage(new Page<>(query.pageNum(), query.pageSize()),
-                Wrappers.<SystemUser>query()
-                        .eq("tenant_id", tenantId)
-                        .eq("deleted", false)
-                        .like(query.username() != null && !query.username().isBlank(), "username", query.username())
-                        .eq(query.status() != null, "status", query.status())
-                        .orderByAsc("id"));
+                Wrappers.<SystemUser>query().lambda()
+                        .eq(SystemUser::getTenantId, tenantId)
+                        .eq(SystemUser::getDeleted, false)
+                        .like(query.username() != null && !query.username().isBlank(), SystemUser::getUsername, query.username())
+                        .eq(query.status() != null, SystemUser::getStatus, query.status())
+                        .orderByAsc(SystemUser::getId));
         return PageResult.from(page, user -> toView(tenantId, user));
     }
 
@@ -214,10 +214,10 @@ public class UserServiceImpl implements UserService {
     @Override
     public SystemUser requireEnabledForLogin(long tenantId, String username) {
         return TenantScope.call(tenantId, () -> {
-            SystemUser user = userMapper.selectOne(Wrappers.<SystemUser>query()
-                    .eq("tenant_id", tenantId)
-                    .eq("username", username)
-                    .eq("deleted", false));
+            SystemUser user = userMapper.selectOne(Wrappers.<SystemUser>query().lambda()
+                    .eq(SystemUser::getTenantId, tenantId)
+                    .eq(SystemUser::getUsername, username)
+                    .eq(SystemUser::getDeleted, false));
             if (user == null) {
                 throw new BusinessException(UserErrorCode.USER_NOT_FOUND);
             }
@@ -272,10 +272,10 @@ public class UserServiceImpl implements UserService {
     }
 
     private SystemUser requireUser(long tenantId, long userId) {
-        SystemUser user = userMapper.selectOne(Wrappers.<SystemUser>query()
-                .eq("tenant_id", tenantId)
-                .eq("id", userId)
-                .eq("deleted", false));
+        SystemUser user = userMapper.selectOne(Wrappers.<SystemUser>query().lambda()
+                .eq(SystemUser::getTenantId, tenantId)
+                .eq(SystemUser::getId, userId)
+                .eq(SystemUser::getDeleted, false));
         if (user == null) {
             throw new BusinessException(UserErrorCode.USER_NOT_FOUND);
         }

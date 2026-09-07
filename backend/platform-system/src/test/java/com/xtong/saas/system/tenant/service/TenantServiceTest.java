@@ -2,6 +2,8 @@ package com.xtong.saas.system.tenant.service;
 
 import com.baomidou.mybatisplus.core.conditions.AbstractWrapper;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.xtong.saas.common.exception.BusinessException;
 import com.xtong.saas.system.tenant.entity.SystemTenant;
 import com.xtong.saas.system.tenant.enums.TenantStatus;
@@ -9,6 +11,8 @@ import com.xtong.saas.system.tenant.exception.TenantErrorCode;
 import com.xtong.saas.system.tenant.mapper.SystemTenantMapper;
 import com.xtong.saas.system.tenant.service.impl.TenantServiceImpl;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeAll;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.mockito.ArgumentCaptor;
 
 import java.util.Map;
@@ -25,6 +29,12 @@ class TenantServiceTest {
 
     private final SystemTenantMapper mapper = mock(SystemTenantMapper.class);
     private final TenantService service = new TenantServiceImpl(mapper);
+
+    /** 为直接检查 Lambda Wrapper SQL 的单测初始化租户实体元数据。 */
+    @BeforeAll
+    static void initializeTenantTableInfo() {
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), SystemTenant.class);
+    }
 
     @Test
     void shouldReturnEnabledTenantByCodeAndExcludeDeletedRows() {
