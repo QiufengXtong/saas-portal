@@ -79,6 +79,7 @@ Set-Location frontend
 ```
 
 开发页面默认访问 `http://localhost:5173`，Vite 会将 `/api` 代理到 `http://localhost:8080`。
+登录页和后台顶栏均可切换明亮/暗黑主题，用户选择会保存在浏览器本地并在下次访问时恢复。
 
 质量检查：
 

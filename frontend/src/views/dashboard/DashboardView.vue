@@ -29,8 +29,8 @@ const permissionCount = computed(() => authStore.currentUser?.permissions.length
 </template>
 
 <style scoped>
-.welcome { padding: 34px; border-radius: 18px; color: white; background: linear-gradient(120deg, #16365f, #2563a8); box-shadow: 0 14px 36px rgb(23 54 95 / 18%); }
+.welcome { padding: 34px; border: 1px solid rgb(255 255 255 / 10%); border-radius: 18px; color: white; background: var(--dashboard-gradient); box-shadow: var(--dashboard-shadow); }
 .welcome p, .welcome h1 { margin: 0; }.welcome h1 { margin: 8px 0; font-size: 34px; }.welcome span { color: #d7e8fa; }
-.metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 20px; }.metrics span { display: block; color: #7b8798; }.metrics strong { display: block; margin-top: 12px; color: #172033; font-size: 24px; }
+.metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 20px; }.metrics :deep(.el-card) { border-color: var(--app-border); background: var(--app-surface); }.metrics span { display: block; color: var(--app-text-secondary); }.metrics strong { display: block; margin-top: 12px; color: var(--app-text); font-size: 24px; }
 @media (max-width: 760px) { .metrics { grid-template-columns: 1fr; } }
 </style>

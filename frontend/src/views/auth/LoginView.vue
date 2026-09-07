@@ -4,6 +4,7 @@ import type {FormInstance, FormRules} from 'element-plus'
 import {reactive, ref} from 'vue'
 import {useRoute, useRouter} from 'vue-router'
 
+import ThemeToggle from '@/components/ThemeToggle.vue'
 import {useAuthStore} from '@/stores/auth'
 import type {LoginCommand} from '@/types/auth'
 
@@ -37,6 +38,7 @@ const submit = async () => {
 
 <template>
   <main class="login-page">
+    <ThemeToggle class="login-theme" />
     <section class="login-intro">
       <p class="eyebrow">
         SAAS PORTAL
@@ -104,13 +106,14 @@ const submit = async () => {
 </template>
 
 <style scoped>
-.login-page { min-height: 100vh; display: grid; grid-template-columns: 1.2fr minmax(360px, 480px); align-items: center; gap: 8vw; padding: 8vw; color: white; background: radial-gradient(circle at 15% 10%, #1d4e89, transparent 35%), linear-gradient(135deg, #07162b, #12345c); }
+.login-page { position: relative; min-height: 100vh; display: grid; grid-template-columns: 1.2fr minmax(360px, 480px); align-items: center; gap: 8vw; padding: 8vw; color: var(--login-heading); background: var(--login-bg); transition: color .25s, background .25s; }
+.login-theme { position: absolute; top: 24px; right: 28px; }
 .login-intro h1 { margin: 12px 0 20px; font-size: clamp(34px, 5vw, 64px); line-height: 1.15; letter-spacing: -.04em; }
-.login-intro p { max-width: 620px; color: #c6d7ed; font-size: 17px; }
-.eyebrow { color: #7dd3fc !important; font-size: 13px !important; font-weight: 800; letter-spacing: .18em; }
-.login-card { padding: 18px; border: 0; border-radius: 18px; }
-.login-card h2 { margin: 0; color: #172033; font-size: 26px; }
-.hint { margin: 8px 0 24px; color: #8490a3; }
+.login-intro p { max-width: 620px; color: var(--login-copy); font-size: 17px; }
+.eyebrow { color: var(--el-color-primary) !important; font-size: 13px !important; font-weight: 800; letter-spacing: .18em; }
+.login-card { padding: 18px; border: 1px solid var(--app-border); border-radius: 18px; background: var(--app-surface); box-shadow: 0 24px 70px rgb(15 23 42 / 16%); }
+.login-card h2 { margin: 0; color: var(--app-text); font-size: 26px; }
+.hint { margin: 8px 0 24px; color: var(--app-text-muted); }
 .submit { width: 100%; height: 42px; margin-top: 8px; }
 @media (max-width: 860px) { .login-page { grid-template-columns: 1fr; padding: 24px; } .login-intro { display: none; } .login-card { width: min(100%, 480px); justify-self: center; } }
 </style>

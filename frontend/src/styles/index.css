@@ -1,10 +1,61 @@
 /* 文件作用：定义应用全局设计变量、基础重置和管理页面通用布局样式。 */
 :root {
     color: #1f2937;
-    background: #f5f7fa;
+    background: #f4f7fb;
     font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
     font-synthesis: none;
     text-rendering: optimizeLegibility;
+    --app-bg: #f4f7fb;
+    --app-surface: #ffffff;
+    --app-surface-muted: #f7f9fc;
+    --app-text: #172033;
+    --app-text-secondary: #657186;
+    --app-text-muted: #8993a4;
+    --app-border: #e4e9f1;
+    --app-border-strong: #cdd5e1;
+    --app-hover: #edf3fb;
+    --app-header-bg: rgb(255 255 255 / 88%);
+    --app-shadow: 0 10px 30px rgb(24 39 75 / 7%);
+    --sidebar-bg: #ffffff;
+    --sidebar-border: #e5eaf2;
+    --sidebar-heading: #172033;
+    --sidebar-text: #5c687a;
+    --sidebar-hover-text: #1f64c8;
+    --sidebar-hover-bg: #eef5ff;
+    --sidebar-active-text: #1767d2;
+    --sidebar-active-bg: #e6f0ff;
+    --login-bg: radial-gradient(circle at 12% 10%, rgb(64 158 255 / 20%), transparent 32%), linear-gradient(135deg, #edf5ff, #f8fafc 58%, #e8f1ff);
+    --login-heading: #10213a;
+    --login-copy: #51647d;
+    --dashboard-gradient: linear-gradient(120deg, #1768b9, #3b82d0);
+    --dashboard-shadow: 0 16px 38px rgb(32 103 177 / 20%);
+}
+
+html.dark {
+    --app-bg: #0b1018;
+    --app-surface: #151c27;
+    --app-surface-muted: #1b2431;
+    --app-text: #edf2f8;
+    --app-text-secondary: #aab5c5;
+    --app-text-muted: #7f8a9b;
+    --app-border: #2a3442;
+    --app-border-strong: #3d495a;
+    --app-hover: #222d3b;
+    --app-header-bg: rgb(21 28 39 / 90%);
+    --app-shadow: 0 12px 32px rgb(0 0 0 / 24%);
+    --sidebar-bg: #101722;
+    --sidebar-border: #26303e;
+    --sidebar-heading: #f1f5f9;
+    --sidebar-text: #9eabba;
+    --sidebar-hover-text: #e4efff;
+    --sidebar-hover-bg: #202c3c;
+    --sidebar-active-text: #79b8ff;
+    --sidebar-active-bg: #18304f;
+    --login-bg: radial-gradient(circle at 12% 10%, rgb(37 99 235 / 24%), transparent 32%), linear-gradient(135deg, #080d14, #111a27 58%, #0b1220);
+    --login-heading: #f1f5f9;
+    --login-copy: #a6b6ca;
+    --dashboard-gradient: linear-gradient(120deg, #132a46, #174f86);
+    --dashboard-shadow: 0 16px 38px rgb(0 0 0 / 28%);
 }
 
 * {
@@ -15,16 +66,27 @@ body {
     margin: 0;
     min-width: 320px;
     min-height: 100vh;
+    color: var(--app-text);
+    background: var(--app-bg);
+    transition: color .25s, background-color .25s;
 }
 
 button, input, textarea, select { font: inherit; }
 
 .page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
-.page-heading h1 { margin: 0; color: #172033; font-size: 25px; }
-.page-heading p { margin: 7px 0 0; color: #7b8798; }
+.page-heading h1 { margin: 0; color: var(--app-text); font-size: 25px; }
+.page-heading p { margin: 7px 0 0; color: var(--app-text-secondary); }
 .filter-card { margin-bottom: 16px; }
+.filter-card, .table-card { border-color: var(--app-border); background: var(--app-surface); box-shadow: var(--app-shadow); }
 .table-card { border-radius: 12px; }
 .pagination { display: flex; justify-content: flex-end; margin-top: 18px; }
+
+.sidebar-menu-popper { --el-menu-bg-color: var(--app-surface); --el-menu-text-color: var(--app-text-secondary); --el-menu-hover-bg-color: var(--app-hover); --el-menu-active-color: var(--el-color-primary); }
+.sidebar-menu-popper .el-menu { padding: 6px; border: 1px solid var(--app-border); border-radius: 10px; box-shadow: var(--app-shadow); }
+.sidebar-menu-popper .el-menu-item { min-width: 160px; height: 42px; border-radius: 7px; }
+.sidebar-menu-popper .el-menu-item:hover { color: var(--el-color-primary); background: var(--app-hover); }
+
+.el-card, .el-dialog, .el-table, .el-input__wrapper, .el-select__wrapper { transition: background-color .25s, border-color .25s, box-shadow .25s; }
 
 a {
     color: var(--el-color-primary);

@@ -1,3 +1,4 @@
+<!-- 文件作用：提示访问路径不存在并提供返回系统入口。 -->
 <template>
   <main class="not-found">
     <p class="code">
@@ -17,6 +18,8 @@
   place-content: center;
   justify-items: center;
   gap: 12px;
+  color: var(--app-text);
+  background: var(--app-bg);
 }
 
 .code {

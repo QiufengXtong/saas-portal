@@ -6,4 +6,4 @@
     </RouterLink>
   </main>
 </template>
-<style scoped>.state-page{min-height:70vh;display:grid;place-content:center;justify-items:center}.state-page strong{color:var(--el-color-warning);font-size:72px}.state-page h1{margin:8px}.state-page p{color:#8792a3}</style>
+<style scoped>.state-page{min-height:70vh;display:grid;place-content:center;justify-items:center}.state-page strong{color:var(--el-color-warning);font-size:72px}.state-page h1{margin:8px;color:var(--app-text)}.state-page p{color:var(--app-text-secondary)}</style>
