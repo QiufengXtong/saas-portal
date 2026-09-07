@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 文件作用：保存租户角色唯一性、管理员资格判断与审计删除的复杂 SQL。 -->
+<mapper namespace="com.xtong.saas.system.role.mapper.SystemRoleMapper">
+    <!-- 包含逻辑删除记录检查租户内角色编码唯一性。 -->
+    <select id="countByTenantAndCodeIncludingDeleted" resultType="long">
+        SELECT COUNT(*)
+        FROM sys_role
+        WHERE tenant_id = #{tenantId}
+          AND role_code = #{roleCode}
+    </select>
+
+    <!-- 按角色 ID 和租户共同关联，判断用户是否拥有有效内置租户管理员角色。 -->
+    <select id="existsTenantAdminRole" resultType="boolean">
+        SELECT EXISTS (
+            SELECT 1
+            FROM sys_user_role ur
+            INNER JOIN sys_role r ON r.id = ur.role_id
+                AND r.tenant_id = ur.tenant_id
+            WHERE ur.tenant_id = #{tenantId}
+              AND ur.user_id = #{userId}
+              AND r.role_code = 'TENANT_ADMIN'
+              AND r.built_in = 1
+              AND r.status = 'ENABLED'
+              AND r.deleted = 0
+        )
+    </select>
+
+    <!-- 统计指定非空 ID 集合中属于本租户且启用、未删除的角色。 -->
+    <select id="countByTenantAndIds" resultType="long">
+        SELECT COUNT(*)
+        FROM sys_role
+        WHERE tenant_id = #{tenantId}
+          AND deleted = 0
+          AND status = 'ENABLED'
+          AND id IN
+          <foreach collection="roleIds" item="roleId" open="(" separator="," close=")">
+              #{roleId}
+          </foreach>
+    </select>
+
+    <!-- 判断非空角色 ID 集合是否包含本租户有效的内置管理员角色。 -->
+    <select id="containsTenantAdminRole" resultType="boolean">
+        SELECT EXISTS (
+            SELECT 1
+            FROM sys_role
+            WHERE tenant_id = #{tenantId}
+              AND deleted = 0
+              AND status = 'ENABLED'
+              AND built_in = 1
+              AND role_code = 'TENANT_ADMIN'
+              AND id IN
+              <foreach collection="roleIds" item="roleId" open="(" separator="," close=")">
+                  #{roleId}
+              </foreach>
+        )
+    </select>
+
+    <!-- 用户、关联与角色同时按租户连接，去重统计启用且未删除的有效管理员。 -->
+    <select id="countEnabledTenantAdminUsers" resultType="long">
+        SELECT COUNT(DISTINCT u.id)
+        FROM sys_user u
+        INNER JOIN sys_user_role ur ON ur.tenant_id = u.tenant_id AND ur.user_id = u.id
+        INNER JOIN sys_role r ON r.tenant_id = ur.tenant_id AND r.id = ur.role_id
+        WHERE u.tenant_id = #{tenantId}
+          AND u.deleted = 0
+          AND u.status = 'ENABLED'
+          AND r.deleted = 0
+          AND r.status = 'ENABLED'
+          AND r.built_in = 1
+          AND r.role_code = 'TENANT_ADMIN'
+    </select>
+
+    <!-- 逻辑删除本租户未删除角色，同时保存真实更新审计。 -->
+    <update id="logicalDeleteWithAudit">
+        UPDATE sys_role
+        SET deleted = 1, updated_by = #{auditorId}, updated_at = #{updatedAt}
+        WHERE tenant_id = #{tenantId} AND id = #{roleId} AND deleted = 0
+    </update>
+</mapper>

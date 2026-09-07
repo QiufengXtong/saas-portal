@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 文件作用：保存租户用户唯一性检查、认证版本递增与审计删除的复杂 SQL。 -->
+<mapper namespace="com.xtong.saas.system.user.mapper.SystemUserMapper">
+    <!-- 包含逻辑删除记录检查租户内用户名唯一性。 -->
+    <select id="countByTenantAndUsernameIncludingDeleted" resultType="long">
+        SELECT COUNT(*)
+        FROM sys_user
+        WHERE tenant_id = #{tenantId}
+          AND username = #{username}
+    </select>
+
+    <!-- 原子增加指定租户内单个未删除用户的认证版本。 -->
+    <update id="incrementAuthVersion">
+        UPDATE sys_user
+        SET auth_version = auth_version + 1
+        WHERE tenant_id = #{tenantId} AND id = #{userId} AND deleted = 0
+    </update>
+
+    <!-- 原子增加指定租户内一组未删除用户的认证版本，调用方保证集合非空。 -->
+    <update id="incrementAuthVersions">
+        UPDATE sys_user SET auth_version = auth_version + 1
+        WHERE tenant_id = #{tenantId} AND deleted = 0 AND id IN
+        <foreach collection="userIds" item="userId" open="(" separator="," close=")">
+            #{userId}
+        </foreach>
+    </update>
+
+    <!-- 逻辑删除用户，同时记录审计并通过认证版本递增使旧会话失效。 -->
+    <update id="logicalDeleteWithAudit">
+        UPDATE sys_user
+        SET deleted = 1,
+            auth_version = auth_version + 1,
+            updated_by = #{auditorId},
+            updated_at = #{updatedAt}
+        WHERE tenant_id = #{tenantId} AND id = #{userId} AND deleted = 0
+    </update>
+</mapper>

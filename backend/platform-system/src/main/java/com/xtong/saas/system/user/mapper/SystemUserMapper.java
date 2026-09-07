@@ -4,47 +4,25 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.xtong.saas.system.user.entity.SystemUser;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
-import org.apache.ibatis.annotations.Select;
-import org.apache.ibatis.annotations.Update;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
-/** 提供租户系统用户的 MyBatis-Plus 数据访问入口。 */
+/** 提供租户用户数据访问，复杂查询与认证版本写入由 XML 实现。 */
 @Mapper
 public interface SystemUserMapper extends BaseMapper<SystemUser> {
 
-    @Select("""
-            SELECT COUNT(*)
-            FROM sys_user
-            WHERE tenant_id = #{tenantId}
-              AND username = #{username}
-            """)
+    /** 包含逻辑删除记录检查指定租户内的用户名占用数量。 */
     long countByTenantAndUsernameIncludingDeleted(
             @Param("tenantId") long tenantId, @Param("username") String username);
 
-    @Update("""
-            UPDATE sys_user
-            SET auth_version = auth_version + 1
-            WHERE tenant_id = #{tenantId} AND id = #{userId} AND deleted = 0
-            """)
+    /** 原子递增指定租户内未删除用户的认证版本，使既有会话失效。 */
     int incrementAuthVersion(@Param("tenantId") long tenantId, @Param("userId") long userId);
 
-    @Update("""
-            <script>
-            UPDATE sys_user SET auth_version = auth_version + 1
-            WHERE tenant_id = #{tenantId} AND deleted = 0 AND id IN
-            <foreach collection="userIds" item="userId" open="(" separator="," close=")">#{userId}</foreach>
-            </script>
-            """)
+    /** 原子递增指定租户内一组未删除用户的认证版本，调用方保证集合非空。 */
     int incrementAuthVersions(@Param("tenantId") long tenantId, @Param("userIds") List<Long> userIds);
 
-    @Update("""
-            UPDATE sys_user
-            SET deleted = 1, auth_version = auth_version + 1,
-                updated_by = #{auditorId}, updated_at = #{updatedAt}
-            WHERE tenant_id = #{tenantId} AND id = #{userId} AND deleted = 0
-            """)
+    /** 逻辑删除租户内未删除用户，同时写入真实审计人、时间并原子递增认证版本。 */
     int logicalDeleteWithAudit(
             @Param("tenantId") long tenantId,
             @Param("userId") long userId,

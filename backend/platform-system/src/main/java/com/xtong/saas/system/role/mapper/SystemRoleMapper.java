@@ -3,96 +3,32 @@ package com.xtong.saas.system.role.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.xtong.saas.system.role.entity.SystemRole;
 import org.apache.ibatis.annotations.Param;
-import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Mapper;
 
-import java.util.Set;
 import java.time.LocalDateTime;
-import org.apache.ibatis.annotations.Update;
+import java.util.Set;
 
-/** 提供租户角色的 MyBatis-Plus 数据访问入口。 */
+/** 提供租户角色数据访问，管理员资格与审计删除的复杂 SQL 由 XML 实现。 */
 @Mapper
 public interface SystemRoleMapper extends BaseMapper<SystemRole> {
 
-    @Select("""
-            SELECT COUNT(*)
-            FROM sys_role
-            WHERE tenant_id = #{tenantId}
-              AND role_code = #{roleCode}
-            """)
+    /** 包含逻辑删除记录检查指定租户内的角色编码占用数量。 */
     long countByTenantAndCodeIncludingDeleted(
             @Param("tenantId") long tenantId, @Param("roleCode") String roleCode);
 
-    @Select("""
-            SELECT EXISTS (
-                SELECT 1
-                FROM sys_user_role ur
-                INNER JOIN sys_role r ON r.id = ur.role_id
-                    AND r.tenant_id = ur.tenant_id
-                WHERE ur.tenant_id = #{tenantId}
-                  AND ur.user_id = #{userId}
-                  AND r.role_code = 'TENANT_ADMIN'
-                  AND r.built_in = 1
-                  AND r.status = 'ENABLED'
-                  AND r.deleted = 0
-            )
-            """)
+    /** 判断用户是否关联本租户启用且未删除的内置管理员角色，不检查用户状态。 */
     boolean existsTenantAdminRole(@Param("tenantId") long tenantId, @Param("userId") long userId);
 
-    @Select("""
-            <script>
-            SELECT COUNT(*)
-            FROM sys_role
-            WHERE tenant_id = #{tenantId}
-              AND deleted = 0
-              AND status = 'ENABLED'
-              AND id IN
-              <foreach collection="roleIds" item="roleId" open="(" separator="," close=")">
-                #{roleId}
-              </foreach>
-            </script>
-            """)
+    /** 统计非空 ID 集合中属于本租户且启用、未删除的角色数量。 */
     long countByTenantAndIds(@Param("tenantId") long tenantId, @Param("roleIds") Set<Long> roleIds);
 
-    @Select("""
-            <script>
-            SELECT EXISTS (
-                SELECT 1
-                FROM sys_role
-                WHERE tenant_id = #{tenantId}
-                  AND deleted = 0
-                  AND status = 'ENABLED'
-                  AND built_in = 1
-                  AND role_code = 'TENANT_ADMIN'
-                  AND id IN
-                  <foreach collection="roleIds" item="roleId" open="(" separator="," close=")">
-                    #{roleId}
-                  </foreach>
-            )
-            </script>
-            """)
+    /** 判断非空 ID 集合是否包含本租户启用且未删除的内置管理员角色。 */
     boolean containsTenantAdminRole(@Param("tenantId") long tenantId, @Param("roleIds") Set<Long> roleIds);
 
-    @Select("""
-            SELECT COUNT(DISTINCT u.id)
-            FROM sys_user u
-            INNER JOIN sys_user_role ur ON ur.tenant_id = u.tenant_id AND ur.user_id = u.id
-            INNER JOIN sys_role r ON r.tenant_id = ur.tenant_id AND r.id = ur.role_id
-            WHERE u.tenant_id = #{tenantId}
-              AND u.deleted = 0
-              AND u.status = 'ENABLED'
-              AND r.deleted = 0
-              AND r.status = 'ENABLED'
-              AND r.built_in = 1
-              AND r.role_code = 'TENANT_ADMIN'
-            """)
+    /** 统计本租户启用且未删除、具备有效内置管理员角色的去重用户数量。 */
     long countEnabledTenantAdminUsers(@Param("tenantId") long tenantId);
 
-    @Update("""
-            UPDATE sys_role
-            SET deleted = 1, updated_by = #{auditorId}, updated_at = #{updatedAt}
-            WHERE tenant_id = #{tenantId} AND id = #{roleId} AND deleted = 0
-            """)
+    /** 逻辑删除租户内未删除角色，同时保存真实审计人和更新时间。 */
     int logicalDeleteWithAudit(
             @Param("tenantId") long tenantId,
             @Param("roleId") long roleId,
