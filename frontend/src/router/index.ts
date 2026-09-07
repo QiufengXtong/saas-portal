@@ -22,6 +22,7 @@ const router = createRouter({
                 {path: 'dashboard', name: 'dashboard', component: () => import('@/views/dashboard/DashboardView.vue'), meta: {title: '工作台'}},
                 {path: 'system/users', name: 'users', component: () => import('@/views/system/user/UserListView.vue'), meta: {title: '用户管理', permission: 'system:user:list'}},
                 {path: 'system/roles', name: 'roles', component: () => import('@/views/system/role/RoleListView.vue'), meta: {title: '角色管理', permission: 'system:role:list'}},
+                {path: 'system/menus', name: 'menus', component: () => import('@/views/system/menu/MenuListView.vue'), meta: {title: '菜单管理', permission: 'system:menu:list'}},
             ],
         },
         {path: '/403', name: 'forbidden', component: () => import('@/views/ForbiddenView.vue'), meta: {title: '无权访问'}},

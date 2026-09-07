@@ -23,4 +23,5 @@ public class SystemMenu extends BaseEntity {
     private Integer sortOrder;
     private Boolean visible;
     private MenuStatus status;
+    private Boolean builtIn;
 }

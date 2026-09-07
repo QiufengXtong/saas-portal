@@ -14,4 +14,20 @@
               #{menuId}
           </foreach>
     </select>
+
+    <!-- 包含逻辑删除记录检查权限码唯一性，更新时排除当前菜单。 -->
+    <select id="countByPermissionCodeIncludingDeleted" resultType="long">
+        SELECT COUNT(*) FROM sys_menu
+        WHERE permission_code = #{permissionCode}
+        <if test="excludedMenuId != null">
+            AND id != #{excludedMenuId}
+        </if>
+    </select>
+
+    <!-- 逻辑删除全局菜单并记录真实更新审计。 -->
+    <update id="logicalDeleteWithAudit">
+        UPDATE sys_menu
+        SET deleted = 1, updated_by = #{auditorId}, updated_at = #{updatedAt}
+        WHERE id = #{menuId} AND deleted = 0
+    </update>
 </mapper>

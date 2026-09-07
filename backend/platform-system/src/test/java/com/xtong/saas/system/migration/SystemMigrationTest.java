@@ -42,6 +42,13 @@ class SystemMigrationTest {
             "system:role:disable",
             "system:role:delete",
             "system:role:assign-menu",
+            "system:menu:list",
+            "system:menu:detail",
+            "system:menu:create",
+            "system:menu:update",
+            "system:menu:enable",
+            "system:menu:disable",
+            "system:menu:delete",
             "system:menu:tree",
             "system:permission:list");
 
@@ -53,7 +60,7 @@ class SystemMigrationTest {
                 .locations("classpath:db/migration")
                 .load();
 
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(4);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(5);
 
         try (Connection connection = dataSource.getConnection()) {
             assertThat(queryForInt(connection,
@@ -69,6 +76,12 @@ class SystemMigrationTest {
                     "select count(*) from information_schema.columns where table_schema = 'public' "
                             + "and table_name = 'sys_user' and column_name = 'auth_version'"))
                     .isEqualTo(1);
+            assertThat(queryForInt(connection,
+                    "select count(*) from information_schema.columns where table_schema = 'public' "
+                            + "and table_name = 'sys_menu' and column_name = 'built_in'"))
+                    .isEqualTo(1);
+            assertThat(queryForInt(connection, "select count(*) from sys_menu where built_in = 0"))
+                    .isZero();
         }
     }
 

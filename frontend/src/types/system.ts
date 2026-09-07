@@ -69,5 +69,24 @@ export interface MenuTreeNode {
     permissionCode: string | null
     sortOrder: number
     visible: boolean
+    status: EnabledStatus
+    builtIn: boolean
     children: MenuTreeNode[]
+}
+
+export interface MenuView extends Omit<MenuTreeNode, 'children'> {
+    createdAt: string | null
+    updatedAt: string | null
+}
+
+export interface MenuCommand {
+    parentId: string | null
+    name: string
+    type: MenuType
+    routePath: string | null
+    component: string | null
+    icon: string | null
+    permissionCode: string | null
+    sortOrder: number
+    visible: boolean
 }

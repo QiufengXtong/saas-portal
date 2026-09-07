@@ -12,6 +12,7 @@ import {
     ElFormItem,
     ElHeader,
     ElInput,
+    ElInputNumber,
     ElMain,
     ElMenu,
     ElMenuItem,
@@ -19,6 +20,7 @@ import {
     ElPagination,
     ElSelect,
     ElSubMenu,
+    ElSwitch,
     ElTable,
     ElTableColumn,
     ElTag,
@@ -40,8 +42,8 @@ app.use(createPinia())
 app.use(router)
 const elementComponents = [
     ElAlert, ElAside, ElButton, ElCard, ElContainer, ElDialog, ElForm, ElFormItem,
-    ElHeader, ElInput, ElMain, ElMenu, ElMenuItem, ElOption, ElPagination, ElSelect,
-    ElSubMenu, ElTable, ElTableColumn, ElTag, ElTree,
+    ElHeader, ElInput, ElInputNumber, ElMain, ElMenu, ElMenuItem, ElOption, ElPagination, ElSelect,
+    ElSubMenu, ElSwitch, ElTable, ElTableColumn, ElTag, ElTree,
 ]
 elementComponents.forEach(component => app.use(component))
 app.mount('#app')

@@ -49,4 +49,46 @@
           </foreach>
         ORDER BY m.permission_code
     </select>
+
+    <!-- 跨租户统计指定全局菜单仍然存在的角色关联。 -->
+    <select id="countByMenuId" resultType="long">
+        SELECT COUNT(*)
+        FROM sys_role_menu rm
+        INNER JOIN sys_role r ON r.id = rm.role_id AND r.tenant_id = rm.tenant_id
+        WHERE rm.menu_id = #{menuId} AND r.deleted = 0
+    </select>
+
+    <!-- 权限变化会影响直接关联角色用户，租户管理员因自动拥有全部权限也始终受影响。 -->
+    <select id="selectUsersAffectedByMenu"
+            resultType="com.xtong.saas.system.menu.model.MenuAffectedUser">
+        SELECT DISTINCT affected.tenant_id AS tenantId, affected.user_id AS userId
+        FROM (
+            SELECT ur.tenant_id, ur.user_id
+            FROM sys_role_menu rm
+            INNER JOIN sys_role r ON r.id = rm.role_id AND r.tenant_id = rm.tenant_id
+            INNER JOIN sys_user_role ur ON ur.role_id = rm.role_id AND ur.tenant_id = rm.tenant_id
+            INNER JOIN sys_user u ON u.id = ur.user_id AND u.tenant_id = ur.tenant_id
+            WHERE rm.menu_id = #{menuId} AND r.deleted = 0 AND u.deleted = 0
+            UNION
+            SELECT ur.tenant_id, ur.user_id
+            FROM sys_user_role ur
+            INNER JOIN sys_role r ON r.id = ur.role_id AND r.tenant_id = ur.tenant_id
+            INNER JOIN sys_user u ON u.id = ur.user_id AND u.tenant_id = ur.tenant_id
+            WHERE r.role_code = 'TENANT_ADMIN' AND r.built_in = 1
+              AND r.status = 'ENABLED' AND r.deleted = 0 AND u.deleted = 0
+        ) affected
+        ORDER BY affected.tenant_id, affected.user_id
+    </select>
+
+    <!-- 新按钮会自动进入租户管理员权限集合，因此只需定位全部有效内置管理员角色用户。 -->
+    <select id="selectTenantAdminUsers"
+            resultType="com.xtong.saas.system.menu.model.MenuAffectedUser">
+        SELECT DISTINCT ur.tenant_id AS tenantId, ur.user_id AS userId
+        FROM sys_user_role ur
+        INNER JOIN sys_role r ON r.id = ur.role_id AND r.tenant_id = ur.tenant_id
+        INNER JOIN sys_user u ON u.id = ur.user_id AND u.tenant_id = ur.tenant_id
+        WHERE r.role_code = 'TENANT_ADMIN' AND r.built_in = 1
+          AND r.status = 'ENABLED' AND r.deleted = 0 AND u.deleted = 0
+        ORDER BY ur.tenant_id, ur.user_id
+    </select>
 </mapper>

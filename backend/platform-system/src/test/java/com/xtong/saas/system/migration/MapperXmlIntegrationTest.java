@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.spring.MybatisSqlSessionFactoryBean;
 import com.xtong.saas.common.mybatis.MyBatisCommonConfig;
 import com.xtong.saas.system.bootstrap.mapper.SystemBootstrapLockMapper;
 import com.xtong.saas.system.menu.mapper.SystemMenuMapper;
+import com.xtong.saas.system.menu.model.MenuAffectedUser;
 import com.xtong.saas.system.role.entity.SystemRoleMenu;
 import com.xtong.saas.system.role.entity.SystemUserRole;
 import com.xtong.saas.system.role.mapper.SystemRoleMapper;
@@ -370,13 +371,17 @@ class MapperXmlIntegrationTest {
 
     @Test
     void shouldLoadMenuAndRelationshipStatementsFromXml() {
-        assertXmlStatement(SystemMenuMapper.class, "countEnabledByIds", "mapper/menu/SystemMenuMapper.xml");
+        for (String method : List.of("countEnabledByIds", "countByPermissionCodeIncludingDeleted",
+                "logicalDeleteWithAudit")) {
+            assertXmlStatement(SystemMenuMapper.class, method, "mapper/menu/SystemMenuMapper.xml");
+        }
         for (String method : List.of("selectRoleIdsByUserId", "deleteByUser", "countByRole",
                 "selectUserIdsByRole", "insertBatch")) {
             assertXmlStatement(SystemUserRoleMapper.class, method, "mapper/role/SystemUserRoleMapper.xml");
         }
         for (String method : List.of("deleteByRole", "insertBatch", "selectMenuIdsByRole",
-                "selectEnabledPermissionCodesByRoleIds")) {
+                "selectEnabledPermissionCodesByRoleIds", "countByMenuId",
+                "selectUsersAffectedByMenu", "selectTenantAdminUsers")) {
             assertXmlStatement(SystemRoleMenuMapper.class, method, "mapper/role/SystemRoleMenuMapper.xml");
         }
     }
@@ -392,6 +397,36 @@ class MapperXmlIntegrationTest {
         assertThat(menuMapper.countEnabledByIds(Set.of(901L, 902L, 903L, 904L, 999L))).isEqualTo(2);
         assertThat(menuMapper.countEnabledByIds(Set.of(902L, 903L, 999L))).isZero();
         TenantScope.run(2L, () -> assertThat(menuMapper.countEnabledByIds(Set.of(901L, 904L))).isEqualTo(2));
+    }
+
+    @Test
+    void shouldLocateMenuAssignmentsAndAffectedUsersAcrossTenants() {
+        insertUser(11L, 1L, "member", "ENABLED", 0, 0);
+        insertUser(12L, 1L, "admin", "ENABLED", 0, 0);
+        insertUser(21L, 2L, "foreign-admin", "ENABLED", 0, 0);
+        insertUser(22L, 2L, "deleted-member", "ENABLED", 1, 0);
+        insertRole(101L, 1L, "MEMBER", "ENABLED", 0, 0);
+        insertRole(102L, 1L, "TENANT_ADMIN", "ENABLED", 1, 0);
+        insertRole(201L, 2L, "TENANT_ADMIN", "ENABLED", 1, 0);
+        insertRole(202L, 2L, "DELETED_ROLE", "ENABLED", 0, 1);
+        insertUserRole(1001L, 1L, 11L, 101L);
+        insertUserRole(1002L, 1L, 12L, 102L);
+        insertUserRole(2001L, 2L, 21L, 201L);
+        insertUserRole(2002L, 2L, 22L, 202L);
+        LocalDateTime createdAt = LocalDateTime.of(2026, 9, 7, 10, 20, 30);
+        TenantScope.run(1L, () -> assertThat(roleMenuMapper.insertBatch(List.of(
+                roleMenu(1L, 101L, 901L, 504L, createdAt)))).isEqualTo(1));
+        TenantScope.run(2L, () -> assertThat(roleMenuMapper.insertBatch(List.of(
+                roleMenu(2L, 202L, 901L, 506L, createdAt)))).isEqualTo(1));
+
+        assertThat(roleMenuMapper.countByMenuId(901L)).isEqualTo(1);
+        assertThat(roleMenuMapper.selectUsersAffectedByMenu(901L)).containsExactly(
+                new MenuAffectedUser(1L, 11L),
+                new MenuAffectedUser(1L, 12L),
+                new MenuAffectedUser(2L, 21L));
+        assertThat(roleMenuMapper.selectTenantAdminUsers()).containsExactly(
+                new MenuAffectedUser(1L, 12L),
+                new MenuAffectedUser(2L, 21L));
     }
 
     @Test

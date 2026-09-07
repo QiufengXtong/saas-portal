@@ -24,7 +24,7 @@ class SystemBootstrapIntegrationTest {
 
     @Test
     void shouldMigrateAndBootstrapInitialTenantIdempotently() {
-        assertThat(successfulVersionedMigrationCount()).isEqualTo(4);
+        assertThat(successfulVersionedMigrationCount()).isEqualTo(5);
         assertThat(count("sys_tenant")).isEqualTo(1);
         assertThat(count("sys_user")).isEqualTo(1);
         assertThat(count("sys_role")).isEqualTo(1);

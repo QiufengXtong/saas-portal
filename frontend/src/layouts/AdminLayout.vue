@@ -13,6 +13,7 @@ const collapsed = ref(false)
 const activePath = computed(() => route.path)
 const canViewUsers = computed(() => authStore.hasPermission('system:user:list'))
 const canViewRoles = computed(() => authStore.hasPermission('system:role:list'))
+const canViewMenus = computed(() => authStore.hasPermission('system:menu:list'))
 
 const handleLogout = async () => {
     await authStore.logout()
@@ -48,7 +49,7 @@ const handleLogout = async () => {
           <span>工作台</span>
         </el-menu-item>
         <el-sub-menu
-          v-if="canViewUsers || canViewRoles"
+          v-if="canViewUsers || canViewRoles || canViewMenus"
           index="system"
           popper-class="sidebar-menu-popper"
         >
@@ -71,6 +72,12 @@ const handleLogout = async () => {
             index="/system/roles"
           >
             角色管理
+          </el-menu-item>
+          <el-menu-item
+            v-if="canViewMenus"
+            index="/system/menus"
+          >
+            菜单管理
           </el-menu-item>
         </el-sub-menu>
       </el-menu>
