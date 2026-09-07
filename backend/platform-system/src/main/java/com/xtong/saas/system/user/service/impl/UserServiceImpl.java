@@ -1,11 +1,13 @@
 package com.xtong.saas.system.user.service.impl;
 
+import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.xtong.saas.common.exception.BusinessException;
 import com.xtong.saas.common.mybatis.AuditorProvider;
 import com.xtong.saas.common.result.PageResult;
 import com.xtong.saas.system.auth.api.SessionRevocationService;
+import com.xtong.saas.system.role.entity.SystemUserRole;
 import com.xtong.saas.system.role.mapper.SystemRoleMapper;
 import com.xtong.saas.system.role.mapper.SystemUserRoleMapper;
 import com.xtong.saas.system.tenant.context.TenantContextHolder;
@@ -267,7 +269,19 @@ public class UserServiceImpl implements UserService {
     private void replaceRoles(long tenantId, long userId, Set<Long> roleIds) {
         userRoleMapper.deleteByUser(tenantId, userId);
         if (!roleIds.isEmpty()) {
-            userRoleMapper.insertBatch(tenantId, userId, roleIds, currentAuditorId(), LocalDateTime.now());
+            long auditorId = currentAuditorId();
+            LocalDateTime createdAt = LocalDateTime.now();
+            List<SystemUserRole> relations = roleIds.stream().map(roleId -> {
+                SystemUserRole relation = new SystemUserRole();
+                relation.setId(IdWorker.getId());
+                relation.setTenantId(tenantId);
+                relation.setUserId(userId);
+                relation.setRoleId(roleId);
+                relation.setCreatedBy(auditorId);
+                relation.setCreatedAt(createdAt);
+                return relation;
+            }).toList();
+            userRoleMapper.insertBatch(relations);
         }
     }
 

@@ -1,10 +1,14 @@
 package com.xtong.saas.system.migration;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.spring.MybatisSqlSessionFactoryBean;
 import com.xtong.saas.common.mybatis.MyBatisCommonConfig;
 import com.xtong.saas.system.bootstrap.mapper.SystemBootstrapLockMapper;
+import com.xtong.saas.system.menu.mapper.SystemMenuMapper;
+import com.xtong.saas.system.role.entity.SystemRoleMenu;
+import com.xtong.saas.system.role.entity.SystemUserRole;
 import com.xtong.saas.system.role.mapper.SystemRoleMapper;
 import com.xtong.saas.system.role.mapper.SystemRoleMenuMapper;
 import com.xtong.saas.system.role.mapper.SystemUserRoleMapper;
@@ -56,6 +60,9 @@ class MapperXmlIntegrationTest {
     private SystemTenantMapper tenantMapper;
     private SystemUserMapper userMapper;
     private SystemRoleMapper roleMapper;
+    private SystemMenuMapper menuMapper;
+    private SystemUserRoleMapper userRoleMapper;
+    private SystemRoleMenuMapper roleMenuMapper;
 
     /** 每个用例启动独立数据库与 Mapper 上下文，避免数据和会话缓存相互影响。 */
     @BeforeEach
@@ -70,6 +77,9 @@ class MapperXmlIntegrationTest {
         tenantMapper = context.getBean(SystemTenantMapper.class);
         userMapper = context.getBean(SystemUserMapper.class);
         roleMapper = context.getBean(SystemRoleMapper.class);
+        menuMapper = context.getBean(SystemMenuMapper.class);
+        userRoleMapper = context.getBean(SystemUserRoleMapper.class);
+        roleMenuMapper = context.getBean(SystemRoleMenuMapper.class);
     }
 
     /** 释放独立内存库和 Spring 上下文，并清理线程租户状态。 */
@@ -330,11 +340,13 @@ class MapperXmlIntegrationTest {
     @Test
     void shouldPersistRealCreationAuditForBothRelationshipBatchMappers() {
         LocalDateTime createdAt = LocalDateTime.of(2026, 9, 7, 10, 20, 30, 456_000_000);
+        List<SystemUserRole> userRelations = List.of(
+                userRole(1L, 11L, 102L, 503L, createdAt), userRole(1L, 11L, 101L, 503L, createdAt));
+        List<SystemRoleMenu> menuRelations = List.of(
+                roleMenu(1L, 101L, 200L, 504L, createdAt), roleMenu(1L, 101L, 100L, 504L, createdAt));
         TenantScope.run(1L, () -> {
-            assertThat(context.getBean(SystemUserRoleMapper.class)
-                    .insertBatch(1L, 11L, Set.of(101L, 102L), 503L, createdAt)).isEqualTo(2);
-            assertThat(context.getBean(SystemRoleMenuMapper.class)
-                    .insertBatch(1L, 101L, Set.of(100L, 200L), 504L, createdAt)).isEqualTo(2);
+            assertThat(userRoleMapper.insertBatch(userRelations)).isEqualTo(2);
+            assertThat(roleMenuMapper.insertBatch(menuRelations)).isEqualTo(2);
         });
         var userRoles = jdbcTemplate.queryForList("SELECT * FROM sys_user_role ORDER BY role_id");
         assertThat(userRoles).hasSize(2).allSatisfy(row -> assertThat(row)
@@ -342,12 +354,192 @@ class MapperXmlIntegrationTest {
                 .containsEntry("created_by", 503L)
                 .containsEntry("created_at", java.sql.Timestamp.valueOf(createdAt)));
         assertThat(userRoles).extracting(row -> row.get("role_id")).containsExactly(101L, 102L);
+        assertThat(userRoles).extracting(row -> row.get("id"))
+                .doesNotContainNull().doesNotHaveDuplicates()
+                .containsExactly(userRelations.get(1).getId(), userRelations.get(0).getId());
         var roleMenus = jdbcTemplate.queryForList("SELECT * FROM sys_role_menu ORDER BY menu_id");
         assertThat(roleMenus).hasSize(2).allSatisfy(row -> assertThat(row)
                 .containsEntry("tenant_id", 1L).containsEntry("role_id", 101L)
                 .containsEntry("created_by", 504L)
                 .containsEntry("created_at", java.sql.Timestamp.valueOf(createdAt)));
         assertThat(roleMenus).extracting(row -> row.get("menu_id")).containsExactly(100L, 200L);
+        assertThat(roleMenus).extracting(row -> row.get("id"))
+                .doesNotContainNull().doesNotHaveDuplicates()
+                .containsExactly(menuRelations.get(1).getId(), menuRelations.get(0).getId());
+    }
+
+    @Test
+    void shouldLoadMenuAndRelationshipStatementsFromXml() {
+        assertXmlStatement(SystemMenuMapper.class, "countEnabledByIds", "mapper/system/menu/SystemMenuMapper.xml");
+        for (String method : List.of("selectRoleIdsByUserId", "deleteByUser", "countByRole",
+                "selectUserIdsByRole", "insertBatch")) {
+            assertXmlStatement(SystemUserRoleMapper.class, method, "mapper/system/role/SystemUserRoleMapper.xml");
+        }
+        for (String method : List.of("deleteByRole", "insertBatch", "selectMenuIdsByRole",
+                "selectEnabledPermissionCodesByRoleIds")) {
+            assertXmlStatement(SystemRoleMenuMapper.class, method, "mapper/system/role/SystemRoleMenuMapper.xml");
+        }
+    }
+
+    @Test
+    void shouldCountOnlyRequestedLiveEnabledGlobalMenus() {
+        insertMenu(901L, "BUTTON", "test:active", "ENABLED", 0);
+        insertMenu(902L, "BUTTON", "test:disabled", "DISABLED", 0);
+        insertMenu(903L, "BUTTON", "test:deleted", "ENABLED", 1);
+        insertMenu(904L, "MENU", null, "ENABLED", 0);
+        insertMenu(905L, "BUTTON", "test:unrequested", "ENABLED", 0);
+
+        assertThat(menuMapper.countEnabledByIds(Set.of(901L, 902L, 903L, 904L, 999L))).isEqualTo(2);
+        assertThat(menuMapper.countEnabledByIds(Set.of(902L, 903L, 999L))).isZero();
+        TenantScope.run(2L, () -> assertThat(menuMapper.countEnabledByIds(Set.of(901L, 904L))).isEqualTo(2));
+    }
+
+    @Test
+    void shouldQueryAndPhysicallyDeleteUserRolesWithinCurrentTenant() {
+        LocalDateTime createdAt = LocalDateTime.of(2026, 9, 7, 10, 20, 30);
+        TenantScope.run(1L, () -> assertThat(userRoleMapper.insertBatch(List.of(
+                userRole(1L, 12L, 101L, 503L, createdAt),
+                userRole(1L, 11L, 102L, 503L, createdAt),
+                userRole(1L, 11L, 101L, 503L, createdAt)))).isEqualTo(3));
+        // 外租户重用相同关联外键，能捕获遗漏 tenant_id 的读写条件。
+        TenantScope.run(2L, () -> assertThat(userRoleMapper.insertBatch(List.of(
+                userRole(2L, 11L, 101L, 505L, createdAt),
+                userRole(2L, 21L, 101L, 505L, createdAt)))).isEqualTo(2));
+        var foreignBefore = jdbcTemplate.queryForList("SELECT * FROM sys_user_role WHERE tenant_id = 2 ORDER BY id");
+
+        TenantScope.run(1L, () -> {
+            assertThat(userRoleMapper.selectRoleIdsByUserId(1L, 11L)).containsExactly(101L, 102L);
+            assertThat(userRoleMapper.selectUserIdsByRole(1L, 101L)).containsExactly(11L, 12L).doesNotHaveDuplicates();
+            assertThat(userRoleMapper.countByRole(1L, 101L)).isEqualTo(2);
+            assertThat(userRoleMapper.countByRole(1L, 999L)).isZero();
+            assertThat(userRoleMapper.selectRoleIdsByUserId(1L, 21L)).isEmpty();
+            assertThat(userRoleMapper.selectRoleIdsByUserId(2L, 11L)).isEmpty();
+            assertThat(userRoleMapper.selectUserIdsByRole(2L, 101L)).isEmpty();
+            assertThat(userRoleMapper.countByRole(2L, 101L)).isZero();
+            assertThat(userRoleMapper.deleteByUser(2L, 11L)).isZero();
+            assertThat(userRoleMapper.deleteByUser(1L, 21L)).isZero();
+            assertThat(userRoleMapper.deleteByUser(1L, 11L)).isEqualTo(2);
+            assertThat(userRoleMapper.deleteByUser(1L, 11L)).isZero();
+            assertThat(userRoleMapper.selectRoleIdsByUserId(1L, 11L)).isEmpty();
+            assertThat(userRoleMapper.selectUserIdsByRole(1L, 101L)).containsExactly(12L);
+            assertThat(userRoleMapper.countByRole(1L, 101L)).isEqualTo(1);
+        });
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM sys_user_role WHERE tenant_id = 1 AND user_id = 11", Long.class)).isZero();
+        assertThat(jdbcTemplate.queryForList("SELECT * FROM sys_user_role WHERE tenant_id = 2 ORDER BY id"))
+                .isEqualTo(foreignBefore);
+        TenantScope.run(2L, () -> {
+            assertThat(userRoleMapper.countByRole(2L, 101L)).isEqualTo(2);
+            assertThat(userRoleMapper.selectUserIdsByRole(2L, 101L)).containsExactly(11L, 21L);
+        });
+    }
+
+    @Test
+    void shouldQueryAndPhysicallyDeleteRoleMenusWithinCurrentTenant() {
+        LocalDateTime createdAt = LocalDateTime.of(2026, 9, 7, 10, 20, 30);
+        TenantScope.run(1L, () -> assertThat(roleMenuMapper.insertBatch(List.of(
+                roleMenu(1L, 101L, 902L, 504L, createdAt),
+                roleMenu(1L, 101L, 901L, 504L, createdAt),
+                roleMenu(1L, 102L, 901L, 504L, createdAt)))).isEqualTo(3));
+        TenantScope.run(2L, () -> assertThat(roleMenuMapper.insertBatch(List.of(
+                roleMenu(2L, 101L, 901L, 506L, createdAt),
+                roleMenu(2L, 201L, 903L, 506L, createdAt)))).isEqualTo(2));
+        var foreignBefore = jdbcTemplate.queryForList("SELECT * FROM sys_role_menu WHERE tenant_id = 2 ORDER BY id");
+
+        TenantScope.run(1L, () -> {
+            assertThat(roleMenuMapper.selectMenuIdsByRole(1L, 101L)).containsExactly(901L, 902L);
+            assertThat(roleMenuMapper.selectMenuIdsByRole(1L, 201L)).isEmpty();
+            assertThat(roleMenuMapper.selectMenuIdsByRole(2L, 101L)).isEmpty();
+            assertThat(roleMenuMapper.deleteByRole(2L, 101L)).isZero();
+            assertThat(roleMenuMapper.deleteByRole(1L, 201L)).isZero();
+            assertThat(roleMenuMapper.deleteByRole(1L, 101L)).isEqualTo(2);
+            assertThat(roleMenuMapper.deleteByRole(1L, 101L)).isZero();
+            assertThat(roleMenuMapper.selectMenuIdsByRole(1L, 101L)).isEmpty();
+            assertThat(roleMenuMapper.selectMenuIdsByRole(1L, 102L)).containsExactly(901L);
+        });
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM sys_role_menu WHERE tenant_id = 1 AND role_id = 101", Long.class)).isZero();
+        assertThat(jdbcTemplate.queryForList("SELECT * FROM sys_role_menu WHERE tenant_id = 2 ORDER BY id"))
+                .isEqualTo(foreignBefore);
+        TenantScope.run(2L, () -> assertThat(roleMenuMapper.selectMenuIdsByRole(2L, 101L)).containsExactly(901L));
+    }
+
+    @Test
+    void shouldLoadOnlyDistinctSortedEnabledButtonPermissionsFromCurrentTenantRoles() {
+        insertRole(101L, 1L, "FIRST", "ENABLED", 0, 0);
+        insertRole(102L, 1L, "SECOND", "ENABLED", 0, 0);
+        insertRole(103L, 1L, "DISABLED", "DISABLED", 0, 0);
+        insertRole(104L, 1L, "DELETED", "ENABLED", 0, 1);
+        insertRole(105L, 1L, "UNREQUESTED", "ENABLED", 0, 0);
+        insertRole(201L, 2L, "FOREIGN", "ENABLED", 0, 0);
+        insertMenu(901L, "BUTTON", "test:zeta", "ENABLED", 0);
+        insertMenu(902L, "BUTTON", "test:alpha", "ENABLED", 0);
+        insertMenu(903L, "BUTTON", "test:disabled-menu", "DISABLED", 0);
+        insertMenu(904L, "BUTTON", "test:deleted-menu", "ENABLED", 1);
+        insertMenu(905L, "MENU", "test:menu", "ENABLED", 0);
+        insertMenu(906L, "BUTTON", null, "ENABLED", 0);
+        insertMenu(907L, "BUTTON", "test:disabled-role", "ENABLED", 0);
+        insertMenu(908L, "BUTTON", "test:deleted-role", "ENABLED", 0);
+        insertMenu(909L, "BUTTON", "test:foreign", "ENABLED", 0);
+        insertMenu(910L, "BUTTON", "test:unrequested", "ENABLED", 0);
+        insertMenu(911L, "BUTTON", "test:foreign-relation", "ENABLED", 0);
+        LocalDateTime createdAt = LocalDateTime.of(2026, 9, 7, 10, 20, 30);
+        TenantScope.run(1L, () -> assertThat(roleMenuMapper.insertBatch(List.of(
+                roleMenu(1L, 101L, 901L, 504L, createdAt),
+                roleMenu(1L, 101L, 902L, 504L, createdAt),
+                roleMenu(1L, 102L, 901L, 504L, createdAt),
+                roleMenu(1L, 101L, 903L, 504L, createdAt),
+                roleMenu(1L, 101L, 904L, 504L, createdAt),
+                roleMenu(1L, 101L, 905L, 504L, createdAt),
+                roleMenu(1L, 101L, 906L, 504L, createdAt),
+                roleMenu(1L, 103L, 907L, 504L, createdAt),
+                roleMenu(1L, 104L, 908L, 504L, createdAt),
+                roleMenu(1L, 201L, 909L, 504L, createdAt),
+                roleMenu(1L, 105L, 910L, 504L, createdAt)))).isEqualTo(11));
+        TenantScope.run(2L, () -> assertThat(roleMenuMapper.insertBatch(List.of(
+                roleMenu(2L, 201L, 909L, 506L, createdAt),
+                roleMenu(2L, 101L, 911L, 506L, createdAt)))).isEqualTo(2));
+
+        TenantScope.run(1L, () -> {
+            assertThat(roleMenuMapper.selectEnabledPermissionCodesByRoleIds(1L,
+                    List.of(201L, 104L, 103L, 102L, 101L, 999L))).containsExactly("test:alpha", "test:zeta");
+            assertThat(roleMenuMapper.selectEnabledPermissionCodesByRoleIds(1L, List.of(201L, 999L))).isEmpty();
+            assertThat(roleMenuMapper.selectEnabledPermissionCodesByRoleIds(2L, List.of(201L))).isEmpty();
+        });
+        TenantScope.run(2L, () -> assertThat(roleMenuMapper.selectEnabledPermissionCodesByRoleIds(2L,
+                List.of(101L, 201L))).containsExactly("test:foreign"));
+    }
+
+    /** 构造带独立雪花主键和确定审计值的用户角色输入，XML 只负责逐字段绑定。 */
+    private SystemUserRole userRole(long tenantId, long userId, long roleId, long auditorId, LocalDateTime createdAt) {
+        SystemUserRole relation = new SystemUserRole();
+        relation.setId(IdWorker.getId());
+        relation.setTenantId(tenantId);
+        relation.setUserId(userId);
+        relation.setRoleId(roleId);
+        relation.setCreatedBy(auditorId);
+        relation.setCreatedAt(createdAt);
+        return relation;
+    }
+
+    /** 构造带独立雪花主键和确定审计值的角色菜单输入。 */
+    private SystemRoleMenu roleMenu(long tenantId, long roleId, long menuId, long auditorId, LocalDateTime createdAt) {
+        SystemRoleMenu relation = new SystemRoleMenu();
+        relation.setId(IdWorker.getId());
+        relation.setTenantId(tenantId);
+        relation.setRoleId(roleId);
+        relation.setMenuId(menuId);
+        relation.setCreatedBy(auditorId);
+        relation.setCreatedAt(createdAt);
+        return relation;
+    }
+
+    /** 插入菜单类型、权限码和可用性各维度，沿用生产权限码唯一约束。 */
+    private void insertMenu(long id, String type, String permissionCode, String status, int deleted) {
+        jdbcTemplate.update("""
+                INSERT INTO sys_menu (id, name, type, permission_code, status, deleted)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, id, "menu-" + id, type, permissionCode, status, deleted);
     }
 
     /** 插入确定状态与初始认证版本的用户，用于独立推导写入结果。 */

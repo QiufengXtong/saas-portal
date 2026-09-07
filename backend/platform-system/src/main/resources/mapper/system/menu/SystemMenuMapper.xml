@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 文件作用：保存全局菜单及权限资源的动态集合校验 SQL。 -->
+<mapper namespace="com.xtong.saas.system.menu.mapper.SystemMenuMapper">
+    <!-- 统计非空 ID 集合中启用且未删除的菜单和权限资源。 -->
+    <select id="countEnabledByIds" resultType="long">
+        SELECT COUNT(*)
+        FROM sys_menu
+        WHERE deleted = 0
+          AND status = 'ENABLED'
+          AND id IN
+          <foreach collection="menuIds" item="menuId" open="(" separator="," close=")">
+              #{menuId}
+          </foreach>
+    </select>
+</mapper>

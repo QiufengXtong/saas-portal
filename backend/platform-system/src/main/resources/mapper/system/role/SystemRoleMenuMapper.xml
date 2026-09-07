@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 文件作用：保存租户内角色菜单物理关联及有效按钮权限联表查询的复杂 SQL。 -->
+<mapper namespace="com.xtong.saas.system.role.mapper.SystemRoleMenuMapper">
+    <!-- 物理删除本租户指定角色的全部菜单关联。 -->
+    <delete id="deleteByRole">
+        DELETE FROM sys_role_menu
+        WHERE tenant_id = #{tenantId}
+          AND role_id = #{roleId}
+    </delete>
+
+    <!-- 批量保存已在业务层生成主键和审计值的非空角色菜单关联列表。 -->
+    <insert id="insertBatch">
+        INSERT INTO sys_role_menu
+            (id, tenant_id, role_id, menu_id, created_by, created_at)
+        VALUES
+        <foreach collection="relations" item="relation" separator=",">
+            (#{relation.id}, #{relation.tenantId}, #{relation.roleId},
+             #{relation.menuId}, #{relation.createdBy}, #{relation.createdAt})
+        </foreach>
+    </insert>
+
+    <!-- 按菜单 ID 升序查询本租户指定角色的菜单关联。 -->
+    <select id="selectMenuIdsByRole" resultType="long">
+        SELECT menu_id FROM sys_role_menu
+        WHERE tenant_id = #{tenantId} AND role_id = #{roleId}
+        ORDER BY menu_id
+    </select>
+
+    <!-- 按租户关联有效角色和按钮资源，去重并稳定排序非空角色列表对应的权限码。 -->
+    <select id="selectEnabledPermissionCodesByRoleIds" resultType="string">
+        SELECT DISTINCT m.permission_code
+        FROM sys_role_menu rm
+        INNER JOIN sys_role r ON r.id = rm.role_id
+            AND r.tenant_id = rm.tenant_id
+        INNER JOIN sys_menu m ON m.id = rm.menu_id
+        WHERE rm.tenant_id = #{tenantId}
+          AND r.tenant_id = #{tenantId}
+          AND r.status = 'ENABLED'
+          AND r.deleted = 0
+          AND m.status = 'ENABLED'
+          AND m.deleted = 0
+          AND m.type = 'BUTTON'
+          AND m.permission_code IS NOT NULL
+          AND rm.role_id IN
+          <foreach collection="roleIds" item="roleId" open="(" separator="," close=")">
+              #{roleId}
+          </foreach>
+        ORDER BY m.permission_code
+    </select>
+</mapper>

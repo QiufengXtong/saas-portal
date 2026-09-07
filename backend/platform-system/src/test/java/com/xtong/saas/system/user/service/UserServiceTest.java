@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.xtong.saas.common.exception.BusinessException;
 import com.xtong.saas.common.mybatis.AuditorProvider;
 import com.xtong.saas.system.auth.api.SessionRevocationService;
+import com.xtong.saas.system.role.entity.SystemUserRole;
 import com.xtong.saas.system.role.mapper.SystemRoleMapper;
 import com.xtong.saas.system.role.mapper.SystemUserRoleMapper;
 import com.xtong.saas.system.tenant.context.TenantScope;
@@ -21,6 +22,7 @@ import jakarta.validation.Validation;
 import jakarta.validation.Validator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -34,6 +36,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -117,7 +120,16 @@ class UserServiceTest {
         order.verify(roleMapper).countByTenantAndIds(1L, Set.of(8L));
         order.verify(userMapper).insert(any(SystemUser.class));
         order.verify(userRoleMapper).deleteByUser(1L, 10L);
-        order.verify(userRoleMapper).insertBatch(eq(1L), eq(10L), eq(Set.of(8L)), eq(42L), any());
+        ArgumentCaptor<List<SystemUserRole>> relationsCaptor = ArgumentCaptor.captor();
+        order.verify(userRoleMapper).insertBatch(relationsCaptor.capture());
+        assertThat(relationsCaptor.getValue()).singleElement().satisfies(relation -> {
+            assertThat(relation.getId()).isPositive();
+            assertThat(relation.getTenantId()).isEqualTo(1L);
+            assertThat(relation.getUserId()).isEqualTo(10L);
+            assertThat(relation.getRoleId()).isEqualTo(8L);
+            assertThat(relation.getCreatedBy()).isEqualTo(42L);
+            assertThat(relation.getCreatedAt()).isNotNull();
+        });
     }
 
     @Test
@@ -163,13 +175,38 @@ class UserServiceTest {
         when(roleMapper.countByTenantAndIds(1L, Set.of(8L, 9L))).thenReturn(2L);
         TransactionSynchronizationManager.initSynchronization();
 
+        LocalDateTime startedAt = LocalDateTime.now();
         TenantScope.run(1L, () -> service.assignRoles(10L, Set.of(8L, 9L)));
 
         verify(userRoleMapper).deleteByUser(1L, 10L);
-        verify(userRoleMapper).insertBatch(eq(1L), eq(10L), eq(Set.of(8L, 9L)), eq(42L), any());
+        ArgumentCaptor<List<SystemUserRole>> relationsCaptor = ArgumentCaptor.captor();
+        verify(userRoleMapper).insertBatch(relationsCaptor.capture());
+        List<SystemUserRole> relations = relationsCaptor.getValue();
+        assertThat(relations).hasSize(2).allSatisfy(relation -> {
+            assertThat(relation.getTenantId()).isEqualTo(1L);
+            assertThat(relation.getUserId()).isEqualTo(10L);
+            assertThat(relation.getCreatedBy()).isEqualTo(42L);
+            assertThat(relation.getCreatedAt()).isBetween(startedAt, LocalDateTime.now());
+        });
+        assertThat(relations).extracting(SystemUserRole::getRoleId).containsExactlyInAnyOrder(8L, 9L);
+        assertThat(relations).extracting(SystemUserRole::getId).doesNotContainNull().doesNotHaveDuplicates();
+        assertThat(relations).extracting(SystemUserRole::getCreatedAt).containsOnly(relations.getFirst().getCreatedAt());
         verify(sessionRevocationService, never()).revokeAllUserSessions(1L, 10L);
         afterCommit();
         verify(sessionRevocationService).revokeAllUserSessions(1L, 10L);
+    }
+
+    @Test
+    void shouldRemoveAllRolesWithoutInvokingEmptyBatchInsert() {
+        when(userMapper.selectOne(any())).thenReturn(user(10L, UserStatus.ENABLED));
+        when(userRoleMapper.selectRoleIdsByUserId(1L, 10L)).thenReturn(List.of(8L));
+
+        TenantScope.run(1L, () -> service.assignRoles(10L, Set.of()));
+
+        verify(userRoleMapper).deleteByUser(1L, 10L);
+        verify(userRoleMapper, never()).insertBatch(anyList());
+        verify(roleMapper, never()).countByTenantAndIds(anyLong(), any());
+        verify(userMapper).incrementAuthVersion(1L, 10L);
     }
 
     @Test

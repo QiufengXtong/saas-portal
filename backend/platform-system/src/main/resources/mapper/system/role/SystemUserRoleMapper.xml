@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 文件作用：保存租户内用户角色物理关联的查询、计数、批量写入和删除 SQL。 -->
+<mapper namespace="com.xtong.saas.system.role.mapper.SystemUserRoleMapper">
+    <!-- 按角色 ID 升序查询本租户指定用户的角色关联。 -->
+    <select id="selectRoleIdsByUserId" resultType="long">
+        SELECT role_id
+        FROM sys_user_role
+        WHERE tenant_id = #{tenantId}
+          AND user_id = #{userId}
+        ORDER BY role_id
+    </select>
+
+    <!-- 物理删除本租户指定用户的全部角色关联。 -->
+    <delete id="deleteByUser">
+        DELETE FROM sys_user_role
+        WHERE tenant_id = #{tenantId}
+          AND user_id = #{userId}
+    </delete>
+
+    <!-- 统计本租户指定角色的用户关联数量。 -->
+    <select id="countByRole" resultType="long">
+        SELECT COUNT(*)
+        FROM sys_user_role
+        WHERE tenant_id = #{tenantId}
+          AND role_id = #{roleId}
+    </select>
+
+    <!-- 按用户 ID 升序加载本租户拥有指定角色的去重用户。 -->
+    <select id="selectUserIdsByRole" resultType="long">
+        SELECT DISTINCT user_id
+        FROM sys_user_role
+        WHERE tenant_id = #{tenantId}
+          AND role_id = #{roleId}
+        ORDER BY user_id
+    </select>
+
+    <!-- 批量保存已在业务层生成主键和审计值的非空用户角色关联列表。 -->
+    <insert id="insertBatch">
+        INSERT INTO sys_user_role
+            (id, tenant_id, user_id, role_id, created_by, created_at)
+        VALUES
+        <foreach collection="relations" item="relation" separator=",">
+            (#{relation.id}, #{relation.tenantId}, #{relation.userId},
+             #{relation.roleId}, #{relation.createdBy}, #{relation.createdAt})
+        </foreach>
+    </insert>
+</mapper>

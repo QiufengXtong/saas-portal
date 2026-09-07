@@ -1,9 +1,11 @@
 package com.xtong.saas.system.bootstrap;
 
+import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.xtong.saas.system.bootstrap.config.BootstrapProperties;
 import com.xtong.saas.system.bootstrap.exception.BootstrapConfigurationException;
 import com.xtong.saas.system.bootstrap.mapper.SystemBootstrapLockMapper;
 import com.xtong.saas.system.role.entity.SystemRole;
+import com.xtong.saas.system.role.entity.SystemUserRole;
 import com.xtong.saas.system.identity.IdentityNormalizer;
 import com.xtong.saas.system.role.enums.RoleStatus;
 import com.xtong.saas.system.role.mapper.SystemRoleMapper;
@@ -125,7 +127,14 @@ public class SystemBootstrapInitializer implements ApplicationRunner {
         userMapper.insert(user);
         requireAssignedId(user.getId(), "user");
 
-        userRoleMapper.insertBatch(tenantId, user.getId(), java.util.Set.of(role.getId()), 0L, LocalDateTime.now());
+        SystemUserRole relation = new SystemUserRole();
+        relation.setId(IdWorker.getId());
+        relation.setTenantId(tenantId);
+        relation.setUserId(user.getId());
+        relation.setRoleId(role.getId());
+        relation.setCreatedBy(0L);
+        relation.setCreatedAt(LocalDateTime.now());
+        userRoleMapper.insertBatch(List.of(relation));
     }
 
     private ValidBootstrapConfiguration validateConfiguration() {

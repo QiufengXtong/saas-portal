@@ -5,6 +5,7 @@ import com.xtong.saas.common.mybatis.AuditorProvider;
 import com.xtong.saas.system.auth.api.SessionRevocationService;
 import com.xtong.saas.system.menu.mapper.SystemMenuMapper;
 import com.xtong.saas.system.role.entity.SystemRole;
+import com.xtong.saas.system.role.entity.SystemRoleMenu;
 import com.xtong.saas.system.role.enums.RoleStatus;
 import com.xtong.saas.system.role.exception.RoleErrorCode;
 import com.xtong.saas.system.role.mapper.SystemRoleMapper;
@@ -16,15 +17,19 @@ import com.xtong.saas.system.tenant.mapper.SystemTenantMapper;
 import com.xtong.saas.system.user.mapper.SystemUserMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.OptionalLong;
 import java.util.Set;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -131,13 +136,22 @@ class RoleServiceTest {
         when(userRoleMapper.selectUserIdsByRole(1L, 8L)).thenReturn(List.of(10L, 11L));
         TransactionSynchronizationManager.initSynchronization();
 
+        LocalDateTime startedAt = LocalDateTime.now();
         TenantScope.run(1L, () -> service.assignMenus(8L, Set.of(101L, 102L)));
 
         verify(roleMenuMapper).deleteByRole(1L, 8L);
-        verify(roleMenuMapper).insertBatch(
-                org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.eq(8L),
-                org.mockito.ArgumentMatchers.eq(Set.of(101L, 102L)),
-                org.mockito.ArgumentMatchers.eq(42L), org.mockito.ArgumentMatchers.any());
+        ArgumentCaptor<List<SystemRoleMenu>> relationsCaptor = ArgumentCaptor.captor();
+        verify(roleMenuMapper).insertBatch(relationsCaptor.capture());
+        List<SystemRoleMenu> relations = relationsCaptor.getValue();
+        assertThat(relations).hasSize(2).allSatisfy(relation -> {
+            assertThat(relation.getTenantId()).isEqualTo(1L);
+            assertThat(relation.getRoleId()).isEqualTo(8L);
+            assertThat(relation.getCreatedBy()).isEqualTo(42L);
+            assertThat(relation.getCreatedAt()).isBetween(startedAt, LocalDateTime.now());
+        });
+        assertThat(relations).extracting(SystemRoleMenu::getMenuId).containsExactlyInAnyOrder(101L, 102L);
+        assertThat(relations).extracting(SystemRoleMenu::getId).doesNotContainNull().doesNotHaveDuplicates();
+        assertThat(relations).extracting(SystemRoleMenu::getCreatedAt).containsOnly(relations.getFirst().getCreatedAt());
         verify(sessionRevocationService, never()).revokeAllUserSessions(1L, 10L);
         afterCommit();
         verify(sessionRevocationService).revokeAllUserSessions(1L, 10L);
@@ -159,10 +173,21 @@ class RoleServiceTest {
         order.verify(menuMapper).countEnabledByIds(Set.of(101L));
         order.verify(userRoleMapper).selectUserIdsByRole(1L, 8L);
         order.verify(roleMenuMapper).deleteByRole(1L, 8L);
-        order.verify(roleMenuMapper).insertBatch(
-                org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.eq(8L),
-                org.mockito.ArgumentMatchers.eq(Set.of(101L)),
-                org.mockito.ArgumentMatchers.eq(42L), org.mockito.ArgumentMatchers.any());
+        order.verify(roleMenuMapper).insertBatch(anyList());
+    }
+
+    @Test
+    void shouldRemoveAllMenusWithoutInvokingEmptyBatchInsert() {
+        when(roleMapper.selectOne(any())).thenReturn(role(8L, false));
+        when(roleMenuMapper.selectMenuIdsByRole(1L, 8L)).thenReturn(List.of(101L));
+        when(userRoleMapper.selectUserIdsByRole(1L, 8L)).thenReturn(List.of(10L));
+
+        TenantScope.run(1L, () -> service.assignMenus(8L, Set.of()));
+
+        verify(roleMenuMapper).deleteByRole(1L, 8L);
+        verify(roleMenuMapper, never()).insertBatch(anyList());
+        verify(menuMapper, never()).countEnabledByIds(any());
+        verify(userMapper).incrementAuthVersions(1L, List.of(10L));
     }
 
     @Test

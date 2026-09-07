@@ -4,7 +4,6 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.xtong.saas.system.menu.entity.SystemMenu;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
-import org.apache.ibatis.annotations.Select;
 
 import java.util.Set;
 
@@ -12,17 +11,6 @@ import java.util.Set;
 @Mapper
 public interface SystemMenuMapper extends BaseMapper<SystemMenu> {
 
-    @Select("""
-            <script>
-            SELECT COUNT(*)
-            FROM sys_menu
-            WHERE deleted = 0
-              AND status = 'ENABLED'
-              AND id IN
-              <foreach collection="menuIds" item="menuId" open="(" separator="," close=")">
-                #{menuId}
-              </foreach>
-            </script>
-            """)
+    /** 统计非空 ID 集合中启用且未删除的全局菜单及权限资源。 */
     long countEnabledByIds(@Param("menuIds") Set<Long> menuIds);
 }

@@ -4,6 +4,7 @@ import com.xtong.saas.system.bootstrap.config.BootstrapProperties;
 import com.xtong.saas.system.bootstrap.exception.BootstrapConfigurationException;
 import com.xtong.saas.system.bootstrap.mapper.SystemBootstrapLockMapper;
 import com.xtong.saas.system.role.entity.SystemRole;
+import com.xtong.saas.system.role.entity.SystemUserRole;
 import com.xtong.saas.system.role.enums.RoleStatus;
 import com.xtong.saas.system.role.mapper.SystemRoleMapper;
 import com.xtong.saas.system.role.mapper.SystemUserRoleMapper;
@@ -28,13 +29,14 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.dao.DuplicateKeyException;
 
 import java.nio.charset.StandardCharsets;
-import java.util.Set;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
@@ -86,6 +88,7 @@ class SystemBootstrapInitializerTest {
         when(tenantService.hasAnyTenant()).thenReturn(false, true);
         when(passwordEncoder.encode("  Secret123  ")).thenReturn("bcrypt-hash");
 
+        LocalDateTime startedAt = LocalDateTime.now();
         initializer.run();
         initializer.run();
 
@@ -95,7 +98,16 @@ class SystemBootstrapInitializerTest {
         verify(tenantMapper, times(1)).insert(tenantCaptor.capture());
         verify(roleMapper, times(1)).insert(roleCaptor.capture());
         verify(userMapper, times(1)).insert(userCaptor.capture());
-        verify(userRoleMapper, times(1)).insertBatch(eq(101L), eq(303L), eq(Set.of(202L)), eq(0L), any());
+        ArgumentCaptor<List<SystemUserRole>> relationsCaptor = ArgumentCaptor.captor();
+        verify(userRoleMapper, times(1)).insertBatch(relationsCaptor.capture());
+        assertThat(relationsCaptor.getValue()).singleElement().satisfies(relation -> {
+            assertThat(relation.getId()).isPositive();
+            assertThat(relation.getTenantId()).isEqualTo(101L);
+            assertThat(relation.getUserId()).isEqualTo(303L);
+            assertThat(relation.getRoleId()).isEqualTo(202L);
+            assertThat(relation.getCreatedBy()).isZero();
+            assertThat(relation.getCreatedAt()).isBetween(startedAt, LocalDateTime.now());
+        });
 
         assertThat(tenantCaptor.getValue().getTenantCode()).isEqualTo("default");
         assertThat(tenantCaptor.getValue().getTenantName()).isEqualTo("Default Tenant");
@@ -120,7 +132,7 @@ class SystemBootstrapInitializerTest {
         order.verify(tenantMapper).lockByIdForAdminInvariant(101L);
         order.verify(roleMapper).insert(any(SystemRole.class));
         order.verify(userMapper).insert(any(SystemUser.class));
-        order.verify(userRoleMapper).insertBatch(eq(101L), eq(303L), eq(Set.of(202L)), eq(0L), any());
+        order.verify(userRoleMapper).insertBatch(anyList());
         order.verify(bootstrapLockMapper).lockInitialization();
         order.verify(tenantService).hasAnyTenant();
     }

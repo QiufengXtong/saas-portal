@@ -1,5 +1,6 @@
 package com.xtong.saas.system.role.service.impl;
 
+import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.xtong.saas.common.exception.BusinessException;
@@ -11,6 +12,7 @@ import com.xtong.saas.system.role.dto.CreateRoleDTO;
 import com.xtong.saas.system.role.dto.RoleQueryDTO;
 import com.xtong.saas.system.role.dto.UpdateRoleDTO;
 import com.xtong.saas.system.role.entity.SystemRole;
+import com.xtong.saas.system.role.entity.SystemRoleMenu;
 import com.xtong.saas.system.role.enums.RoleStatus;
 import com.xtong.saas.system.role.exception.RoleErrorCode;
 import com.xtong.saas.system.role.mapper.SystemRoleMapper;
@@ -161,7 +163,19 @@ public class RoleServiceImpl implements RoleService {
         List<Long> userIds = userRoleMapper.selectUserIdsByRole(tenantId, roleId);
         roleMenuMapper.deleteByRole(tenantId, roleId);
         if (!menuIds.isEmpty()) {
-            roleMenuMapper.insertBatch(tenantId, roleId, menuIds, currentAuditorId(), LocalDateTime.now());
+            long auditorId = currentAuditorId();
+            LocalDateTime createdAt = LocalDateTime.now();
+            List<SystemRoleMenu> relations = menuIds.stream().map(menuId -> {
+                SystemRoleMenu relation = new SystemRoleMenu();
+                relation.setId(IdWorker.getId());
+                relation.setTenantId(tenantId);
+                relation.setRoleId(roleId);
+                relation.setMenuId(menuId);
+                relation.setCreatedBy(auditorId);
+                relation.setCreatedAt(createdAt);
+                return relation;
+            }).toList();
+            roleMenuMapper.insertBatch(relations);
         }
         incrementAffectedAuthVersions(tenantId, userIds);
         registerRevocationsAfterCommit(tenantId, userIds);
