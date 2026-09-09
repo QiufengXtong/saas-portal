@@ -1,6 +1,7 @@
 package com.xtong.saas.system.migration;
 
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.Test;
 
@@ -53,6 +54,99 @@ class SystemMigrationTest {
             "system:permission:list");
 
     @Test
+    void shouldPromoteOnlyInitialAdminAndRemovePlatformRoleAssignmentsOnUpgrade() throws Exception {
+        DataSource dataSource = migrationDataSource("platform_scope_upgrade");
+        Flyway.configure().dataSource(dataSource).locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("5")).load().migrate();
+        try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
+            statement.executeUpdate("insert into sys_tenant (id, tenant_code, tenant_name) values "
+                    + "(1, 'first', 'First'), (2, 'second', 'Second')");
+            statement.executeUpdate("insert into sys_user "
+                    + "(id, tenant_id, username, password_hash, display_name, status) values "
+                    + "(11, 1, 'admin', 'hash', 'Admin', 'ENABLED'), "
+                    + "(21, 2, 'admin', 'hash', 'Admin', 'ENABLED')");
+            statement.executeUpdate("insert into sys_role "
+                    + "(id, tenant_id, role_code, role_name, status, built_in) values "
+                    + "(101, 1, 'TENANT_ADMIN', 'Admin', 'ENABLED', 1), "
+                    + "(201, 2, 'TENANT_ADMIN', 'Admin', 'ENABLED', 1)");
+            statement.executeUpdate("insert into sys_user_role (id, tenant_id, user_id, role_id) values "
+                    + "(1001, 1, 11, 101), (2001, 2, 21, 201)");
+            statement.executeUpdate("insert into sys_role_menu (id, tenant_id, role_id, menu_id) values "
+                    + "(1002, 1, 101, 13001), (2002, 2, 201, 13001)");
+        }
+
+        Flyway.configure().dataSource(dataSource).locations("classpath:db/migration").load().migrate();
+
+        try (Connection connection = dataSource.getConnection()) {
+            assertThat(queryForInt(connection, "select count(*) from sys_user_role ur "
+                    + "join sys_role r on r.id = ur.role_id and r.tenant_id = ur.tenant_id "
+                    + "where ur.user_id = 11 and r.role_code = 'PLATFORM_ADMIN' and r.built_in = 1")).isEqualTo(1);
+            assertThat(queryForInt(connection, "select count(*) from sys_user_role ur "
+                    + "join sys_role r on r.id = ur.role_id and r.tenant_id = ur.tenant_id "
+                    + "where ur.user_id = 21 and r.role_code = 'PLATFORM_ADMIN'")).isZero();
+            assertThat(queryForInt(connection, "select count(*) from sys_role_menu")).isZero();
+            assertThat(queryForInt(connection, "select sum(auth_version) from sys_user")).isEqualTo(6);
+        }
+    }
+
+    @Test
+    void shouldRetireLegacyTenantAdminWithoutChangingAssignments() throws Exception {
+        DataSource dataSource = migrationDataSource("retire_tenant_admin");
+        Flyway.configure().dataSource(dataSource).locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("7")).load().migrate();
+        try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
+            statement.executeUpdate("insert into sys_tenant (id, tenant_code, tenant_name) values (1, 'legacy', 'Legacy')");
+            statement.executeUpdate("insert into sys_user "
+                    + "(id, tenant_id, username, password_hash, display_name, auth_version) values "
+                    + "(11, 1, 'legacy', 'hash', 'Legacy', 5)");
+            statement.executeUpdate("insert into sys_role "
+                    + "(id, tenant_id, role_code, role_name, built_in) values "
+                    + "(101, 1, 'TENANT_ADMIN', 'Tenant admin', 1), "
+                    + "(102, 1, 'PLATFORM_ADMIN', 'Platform admin', 1)");
+            statement.executeUpdate("insert into sys_user_role (id, tenant_id, user_id, role_id) values "
+                    + "(1001, 1, 11, 101)");
+            statement.executeUpdate("insert into sys_role_menu (id, tenant_id, role_id, menu_id) values "
+                    + "(1002, 1, 101, 11001)");
+        }
+
+        assertThat(Flyway.configure().dataSource(dataSource).locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("8")).load().migrate().migrationsExecuted).isEqualTo(1);
+
+        try (Connection connection = dataSource.getConnection()) {
+            assertThat(queryForInt(connection, "select built_in from sys_role where id = 101")).isZero();
+            assertThat(queryForInt(connection, "select built_in from sys_role where id = 102")).isEqualTo(1);
+            assertThat(queryForInt(connection, "select count(*) from sys_role")).isEqualTo(2);
+            assertThat(queryForInt(connection, "select count(*) from sys_user_role "
+                    + "where tenant_id = 1 and user_id = 11 and role_id = 101")).isEqualTo(1);
+            assertThat(queryForInt(connection, "select count(*) from sys_role_menu "
+                    + "where tenant_id = 1 and role_id = 101 and menu_id = 11001")).isEqualTo(1);
+            assertThat(queryForInt(connection, "select auth_version from sys_user where id = 11")).isEqualTo(6);
+        }
+    }
+
+    @Test
+    void shouldMoveQueryPermissionsUnderRoleMenuOnUpgrade() throws Exception {
+        DataSource dataSource = migrationDataSource("move_query_permissions");
+        Flyway.configure().dataSource(dataSource).locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("8")).load().migrate();
+        try (Connection connection = dataSource.getConnection()) {
+            assertThat(queryForInt(connection, "select count(*) from sys_menu "
+                    + "where id in (10001, 10002) and parent_id = 100")).isEqualTo(2);
+        }
+        assertThat(Flyway.configure().dataSource(dataSource).locations("classpath:db/migration")
+                .load().migrate().migrationsExecuted).isEqualTo(1);
+        try (Connection connection = dataSource.getConnection()) {
+            assertThat(queryForInt(connection, "select count(*) from sys_menu "
+                    + "where id in (10001, 10002) and parent_id = 120 "
+                    + "and built_in = 1 and permission_scope = 'TENANT' and type = 'BUTTON'")).isEqualTo(2);
+            assertThat(queryForInt(connection, "select sort_order from sys_menu where id = 10001")).isEqualTo(9);
+            assertThat(queryForInt(connection, "select sort_order from sys_menu where id = 10002")).isEqualTo(10);
+            assertThat(queryForStrings(connection, "select permission_code from sys_menu where id in (10001, 10002)"))
+                    .containsExactlyInAnyOrder("system:menu:tree", "system:permission:list");
+        }
+    }
+
+    @Test
     void shouldCreateSystemSchemaAndPermissionCatalog() throws Exception {
         DataSource dataSource = migrationDataSource();
         Flyway flyway = Flyway.configure()
@@ -60,7 +154,7 @@ class SystemMigrationTest {
                 .locations("classpath:db/migration")
                 .load();
 
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(5);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(9);
 
         try (Connection connection = dataSource.getConnection()) {
             assertThat(queryForInt(connection,
@@ -80,6 +174,17 @@ class SystemMigrationTest {
                     "select count(*) from information_schema.columns where table_schema = 'public' "
                             + "and table_name = 'sys_menu' and column_name = 'built_in'"))
                     .isEqualTo(1);
+            assertThat(queryForInt(connection,
+                    "select count(*) from information_schema.columns where table_schema = 'public' "
+                            + "and table_name = 'sys_user' and column_name = 'platform_admin'"))
+                    .isZero();
+            assertThat(queryForInt(connection,
+                    "select count(*) from information_schema.columns where table_schema = 'public' "
+                            + "and table_name = 'sys_menu' and column_name = 'permission_scope'"))
+                    .isEqualTo(1);
+            assertThat(queryForInt(connection,
+                    "select count(*) from sys_menu where permission_scope = 'PLATFORM'"))
+                    .isEqualTo(8);
             assertThat(queryForInt(connection, "select count(*) from sys_menu where built_in = 0"))
                     .isZero();
         }

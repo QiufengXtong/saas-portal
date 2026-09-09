@@ -143,12 +143,11 @@ class MapperXmlIntegrationTest {
 
     @Test
     void shouldLoadUserAndRoleStatementsFromXml() {
-        for (String method : List.of("countByTenantAndUsernameIncludingDeleted", "incrementAuthVersion",
+        for (String method : List.of("countByTenantAndUsernameIncludingDeleted", "existsPlatformAdmin", "incrementAuthVersion",
                 "incrementAuthVersions", "logicalDeleteWithAudit")) {
             assertXmlStatement(SystemUserMapper.class, method, "mapper/user/SystemUserMapper.xml");
         }
-        for (String method : List.of("countByTenantAndCodeIncludingDeleted", "existsTenantAdminRole",
-                "countByTenantAndIds", "containsTenantAdminRole", "countEnabledTenantAdminUsers",
+        for (String method : List.of("countByTenantAndCodeIncludingDeleted", "countByTenantAndIds",
                 "logicalDeleteWithAudit")) {
             assertXmlStatement(SystemRoleMapper.class, method, "mapper/role/SystemRoleMapper.xml");
         }
@@ -164,6 +163,8 @@ class MapperXmlIntegrationTest {
         insertRole(101L, 1L, "RESERVED", "ENABLED", 0, 1);
         insertRole(201L, 2L, "RESERVED", "ENABLED", 0, 0);
         insertRole(202L, 2L, "FOREIGN_ONLY", "ENABLED", 0, 1);
+        insertRole(301L, 2L, "PLATFORM_ADMIN", "ENABLED", 1, 0);
+        insertUserRole(9001L, 2L, 21L, 301L);
 
         TenantScope.run(1L, () -> {
             assertThat(userMapper.countByTenantAndUsernameIncludingDeleted(1L, "reserved")).isEqualTo(1);
@@ -171,10 +172,12 @@ class MapperXmlIntegrationTest {
             assertThat(userMapper.countByTenantAndUsernameIncludingDeleted(1L, "foreign-only")).isZero();
             assertThat(roleMapper.countByTenantAndCodeIncludingDeleted(1L, "FOREIGN_ONLY")).isZero();
             assertThat(userMapper.countByTenantAndUsernameIncludingDeleted(2L, "reserved")).isZero();
+            assertThat(userMapper.existsPlatformAdmin(1L, 21L)).isFalse();
             assertThat(roleMapper.countByTenantAndCodeIncludingDeleted(2L, "RESERVED")).isZero();
         });
         TenantScope.run(2L, () -> {
             assertThat(userMapper.countByTenantAndUsernameIncludingDeleted(2L, "reserved")).isEqualTo(1);
+            assertThat(userMapper.existsPlatformAdmin(2L, 21L)).isTrue();
             assertThat(roleMapper.countByTenantAndCodeIncludingDeleted(2L, "RESERVED")).isEqualTo(1);
         });
     }
@@ -279,9 +282,11 @@ class MapperXmlIntegrationTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"TENANT_ADMIN, ENABLED, 1, 0, true, 1", "TENANT_ADMIN, DISABLED, 1, 0, false, 0",
+    @CsvSource({"TENANT_ADMIN, ENABLED, 1, 0, false, 1", "TENANT_ADMIN, DISABLED, 1, 0, false, 0",
             "TENANT_ADMIN, ENABLED, 0, 0, false, 1", "TENANT_ADMIN, ENABLED, 1, 1, false, 0",
-            "ORDINARY, ENABLED, 1, 0, false, 1"})
+            "ORDINARY, ENABLED, 1, 0, false, 1",
+            "PLATFORM_ADMIN, ENABLED, 1, 0, true, 0", "PLATFORM_ADMIN, DISABLED, 1, 0, false, 0",
+            "PLATFORM_ADMIN, ENABLED, 0, 0, false, 0", "PLATFORM_ADMIN, ENABLED, 1, 1, false, 0"})
     void shouldApplyRoleEligibilityRules(String code, String status, int builtIn, int deleted,
             boolean administrator, long enabledCount) {
         insertUser(11L, 1L, "member", "ENABLED", 0, 0);
@@ -289,28 +294,24 @@ class MapperXmlIntegrationTest {
         insertRole(201L, 2L, "TENANT_ADMIN", "ENABLED", 1, 0);
         insertUserRole(1001L, 1L, 11L, 101L);
         TenantScope.run(1L, () -> {
-            assertThat(roleMapper.existsTenantAdminRole(1L, 11L)).isEqualTo(administrator);
-            assertThat(roleMapper.containsTenantAdminRole(1L, Set.of(101L, 201L, 999L)))
+            assertThat(userMapper.existsPlatformAdmin(1L, 11L))
                     .isEqualTo(administrator);
             assertThat(roleMapper.countByTenantAndIds(1L, Set.of(101L, 201L, 999L)))
                     .isEqualTo(enabledCount);
-            assertThat(roleMapper.countEnabledTenantAdminUsers(1L)).isEqualTo(administrator ? 1 : 0);
-            assertThat(roleMapper.existsTenantAdminRole(1L, 99L)).isFalse();
-            assertThat(roleMapper.containsTenantAdminRole(1L, Set.of(201L, 999L))).isFalse();
             assertThat(roleMapper.countByTenantAndIds(1L, Set.of(201L, 999L))).isZero();
         });
     }
 
     @Test
-    void shouldCountOnlyLiveEnabledAdminUsersAndRejectCrossTenantRelationships() {
+    void shouldRejectInvalidPlatformAdministratorRelationships() {
         insertUser(11L, 1L, "active", "ENABLED", 0, 0);
         insertUser(12L, 1L, "disabled", "DISABLED", 0, 0);
         insertUser(13L, 1L, "deleted", "ENABLED", 1, 0);
         insertUser(14L, 1L, "cross-role", "ENABLED", 0, 0);
         insertUser(15L, 1L, "cross-relation", "ENABLED", 0, 0);
         insertUser(21L, 2L, "foreign", "ENABLED", 0, 0);
-        insertRole(101L, 1L, "TENANT_ADMIN", "ENABLED", 1, 0);
-        insertRole(201L, 2L, "TENANT_ADMIN", "ENABLED", 1, 0);
+        insertRole(101L, 1L, "PLATFORM_ADMIN", "ENABLED", 1, 0);
+        insertRole(201L, 2L, "PLATFORM_ADMIN", "ENABLED", 1, 0);
         insertUserRole(1001L, 1L, 11L, 101L);
         insertUserRole(1002L, 1L, 12L, 101L);
         insertUserRole(1003L, 1L, 13L, 101L);
@@ -319,23 +320,13 @@ class MapperXmlIntegrationTest {
         insertUserRole(1006L, 1L, 21L, 101L);
         insertUserRole(1007L, 2L, 21L, 201L);
         TenantScope.run(1L, () -> {
-            assertThat(roleMapper.countEnabledTenantAdminUsers(1L)).isEqualTo(1);
-            assertThat(roleMapper.existsTenantAdminRole(1L, 14L)).isFalse();
-            assertThat(roleMapper.existsTenantAdminRole(1L, 15L)).isFalse();
-            // 角色资格查询本身不读取用户状态，启用用户数量查询负责过滤用户。
-            assertThat(roleMapper.existsTenantAdminRole(1L, 12L)).isTrue();
-            assertThat(roleMapper.existsTenantAdminRole(1L, 13L)).isTrue();
-            assertThat(roleMapper.countEnabledTenantAdminUsers(2L)).isZero();
-            assertThat(roleMapper.existsTenantAdminRole(2L, 21L)).isFalse();
-            assertThat(roleMapper.containsTenantAdminRole(2L, Set.of(201L))).isFalse();
-            assertThat(roleMapper.countByTenantAndIds(2L, Set.of(201L))).isZero();
+            assertThat(userMapper.existsPlatformAdmin(1L, 11L)).isTrue();
+            for (long userId : List.of(12L, 13L, 14L, 15L, 21L)) {
+                assertThat(userMapper.existsPlatformAdmin(1L, userId)).isFalse();
+            }
+            assertThat(userMapper.existsPlatformAdmin(2L, 21L)).isFalse();
         });
-        TenantScope.run(2L, () -> {
-            assertThat(roleMapper.countEnabledTenantAdminUsers(2L)).isEqualTo(1);
-            assertThat(roleMapper.existsTenantAdminRole(2L, 21L)).isTrue();
-            assertThat(roleMapper.containsTenantAdminRole(2L, Set.of(201L))).isTrue();
-            assertThat(roleMapper.countByTenantAndIds(2L, Set.of(101L, 201L))).isEqualTo(1);
-        });
+        TenantScope.run(2L, () -> assertThat(userMapper.existsPlatformAdmin(2L, 21L)).isTrue());
     }
 
     @Test
@@ -371,7 +362,7 @@ class MapperXmlIntegrationTest {
 
     @Test
     void shouldLoadMenuAndRelationshipStatementsFromXml() {
-        for (String method : List.of("countEnabledByIds", "countByPermissionCodeIncludingDeleted",
+        for (String method : List.of("countEnabledTenantAssignableByIds", "countByPermissionCodeIncludingDeleted",
                 "logicalDeleteWithAudit")) {
             assertXmlStatement(SystemMenuMapper.class, method, "mapper/menu/SystemMenuMapper.xml");
         }
@@ -381,7 +372,7 @@ class MapperXmlIntegrationTest {
         }
         for (String method : List.of("deleteByRole", "insertBatch", "selectMenuIdsByRole",
                 "selectEnabledPermissionCodesByRoleIds", "countByMenuId",
-                "selectUsersAffectedByMenu", "selectTenantAdminUsers")) {
+                "selectUsersAffectedByMenu", "selectPlatformAdminUsers")) {
             assertXmlStatement(SystemRoleMenuMapper.class, method, "mapper/role/SystemRoleMenuMapper.xml");
         }
     }
@@ -393,14 +384,17 @@ class MapperXmlIntegrationTest {
         insertMenu(903L, "BUTTON", "test:deleted", "ENABLED", 1);
         insertMenu(904L, "MENU", null, "ENABLED", 0);
         insertMenu(905L, "BUTTON", "test:unrequested", "ENABLED", 0);
+        insertMenu(906L, "BUTTON", "test:platform", "ENABLED", 0);
+        jdbcTemplate.update("UPDATE sys_menu SET permission_scope = 'PLATFORM' WHERE id = 906");
 
-        assertThat(menuMapper.countEnabledByIds(Set.of(901L, 902L, 903L, 904L, 999L))).isEqualTo(2);
-        assertThat(menuMapper.countEnabledByIds(Set.of(902L, 903L, 999L))).isZero();
-        TenantScope.run(2L, () -> assertThat(menuMapper.countEnabledByIds(Set.of(901L, 904L))).isEqualTo(2));
+        assertThat(menuMapper.countEnabledTenantAssignableByIds(Set.of(901L, 902L, 903L, 904L, 906L, 999L))).isEqualTo(2);
+        assertThat(menuMapper.countEnabledTenantAssignableByIds(Set.of(902L, 903L, 999L))).isZero();
+        TenantScope.run(2L, () -> assertThat(menuMapper.countEnabledTenantAssignableByIds(Set.of(901L, 904L))).isEqualTo(2));
     }
 
     @Test
     void shouldLocateMenuAssignmentsAndAffectedUsersAcrossTenants() {
+        insertMenu(901L, "BUTTON", "test:affected", "ENABLED", 0);
         insertUser(11L, 1L, "member", "ENABLED", 0, 0);
         insertUser(12L, 1L, "admin", "ENABLED", 0, 0);
         insertUser(21L, 2L, "foreign-admin", "ENABLED", 0, 0);
@@ -410,9 +404,10 @@ class MapperXmlIntegrationTest {
         insertRole(201L, 2L, "TENANT_ADMIN", "ENABLED", 1, 0);
         insertRole(202L, 2L, "DELETED_ROLE", "ENABLED", 0, 1);
         insertUserRole(1001L, 1L, 11L, 101L);
-        insertUserRole(1002L, 1L, 12L, 102L);
         insertUserRole(2001L, 2L, 21L, 201L);
         insertUserRole(2002L, 2L, 22L, 202L);
+        insertRole(301L, 1L, "PLATFORM_ADMIN", "ENABLED", 1, 0);
+        insertUserRole(9001L, 1L, 12L, 301L);
         LocalDateTime createdAt = LocalDateTime.of(2026, 9, 7, 10, 20, 30);
         TenantScope.run(1L, () -> assertThat(roleMenuMapper.insertBatch(List.of(
                 roleMenu(1L, 101L, 901L, 504L, createdAt)))).isEqualTo(1));
@@ -422,11 +417,11 @@ class MapperXmlIntegrationTest {
         assertThat(roleMenuMapper.countByMenuId(901L)).isEqualTo(1);
         assertThat(roleMenuMapper.selectUsersAffectedByMenu(901L)).containsExactly(
                 new MenuAffectedUser(1L, 11L),
-                new MenuAffectedUser(1L, 12L),
-                new MenuAffectedUser(2L, 21L));
-        assertThat(roleMenuMapper.selectTenantAdminUsers()).containsExactly(
-                new MenuAffectedUser(1L, 12L),
-                new MenuAffectedUser(2L, 21L));
+                new MenuAffectedUser(1L, 12L));
+        assertThat(roleMenuMapper.selectUsersAffectedByMenu(13001L)).containsExactly(
+                new MenuAffectedUser(1L, 12L));
+        assertThat(roleMenuMapper.selectPlatformAdminUsers()).containsExactly(
+                new MenuAffectedUser(1L, 12L));
     }
 
     @Test
@@ -518,6 +513,8 @@ class MapperXmlIntegrationTest {
         insertMenu(909L, "BUTTON", "test:foreign", "ENABLED", 0);
         insertMenu(910L, "BUTTON", "test:unrequested", "ENABLED", 0);
         insertMenu(911L, "BUTTON", "test:foreign-relation", "ENABLED", 0);
+        insertMenu(912L, "BUTTON", "test:platform", "ENABLED", 0);
+        jdbcTemplate.update("UPDATE sys_menu SET permission_scope = 'PLATFORM' WHERE id = 912");
         LocalDateTime createdAt = LocalDateTime.of(2026, 9, 7, 10, 20, 30);
         TenantScope.run(1L, () -> assertThat(roleMenuMapper.insertBatch(List.of(
                 roleMenu(1L, 101L, 901L, 504L, createdAt),
@@ -530,7 +527,8 @@ class MapperXmlIntegrationTest {
                 roleMenu(1L, 103L, 907L, 504L, createdAt),
                 roleMenu(1L, 104L, 908L, 504L, createdAt),
                 roleMenu(1L, 201L, 909L, 504L, createdAt),
-                roleMenu(1L, 105L, 910L, 504L, createdAt)))).isEqualTo(11));
+                roleMenu(1L, 101L, 912L, 504L, createdAt),
+                roleMenu(1L, 105L, 910L, 504L, createdAt)))).isEqualTo(12));
         TenantScope.run(2L, () -> assertThat(roleMenuMapper.insertBatch(List.of(
                 roleMenu(2L, 201L, 909L, 506L, createdAt),
                 roleMenu(2L, 101L, 911L, 506L, createdAt)))).isEqualTo(2));
@@ -638,7 +636,7 @@ class MapperXmlIntegrationTest {
             dataSource.setUser("sa");
             dataSource.setPassword("");
             Flyway.configure().dataSource(dataSource).locations("classpath:db/migration")
-                    .target("4").load().migrate();
+                    .load().migrate();
             return dataSource;
         }
 

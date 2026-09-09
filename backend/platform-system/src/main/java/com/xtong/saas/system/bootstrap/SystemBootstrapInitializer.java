@@ -36,7 +36,7 @@ import java.util.List;
 @ConditionalOnBean(BootstrapProperties.class)
 public class SystemBootstrapInitializer implements ApplicationRunner {
 
-    private static final String TENANT_ADMIN_ROLE_CODE = "TENANT_ADMIN";
+    private static final String PLATFORM_ADMIN_ROLE_CODE = "PLATFORM_ADMIN";
 
     private final BootstrapProperties properties;
     private final SystemBootstrapLockMapper bootstrapLockMapper;
@@ -110,8 +110,8 @@ public class SystemBootstrapInitializer implements ApplicationRunner {
     private void createAdminGraph(long tenantId, ValidBootstrapConfiguration configuration) {
         SystemRole role = new SystemRole();
         role.setTenantId(tenantId);
-        role.setRoleCode(TENANT_ADMIN_ROLE_CODE);
-        role.setRoleName("租户管理员");
+        role.setRoleCode(PLATFORM_ADMIN_ROLE_CODE);
+        role.setRoleName("平台管理员");
         role.setStatus(RoleStatus.ENABLED);
         role.setBuiltIn(true);
         roleMapper.insert(role);

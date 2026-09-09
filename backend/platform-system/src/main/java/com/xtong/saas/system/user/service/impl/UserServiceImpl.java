@@ -8,6 +8,8 @@ import com.xtong.saas.common.mybatis.AuditorProvider;
 import com.xtong.saas.common.result.PageResult;
 import com.xtong.saas.system.auth.api.SessionRevocationService;
 import com.xtong.saas.system.role.entity.SystemUserRole;
+import com.xtong.saas.system.role.entity.SystemRole;
+import com.xtong.saas.system.role.enums.RoleStatus;
 import com.xtong.saas.system.role.mapper.SystemRoleMapper;
 import com.xtong.saas.system.role.mapper.SystemUserRoleMapper;
 import com.xtong.saas.system.tenant.context.TenantContextHolder;
@@ -80,14 +82,15 @@ public class UserServiceImpl implements UserService {
                         .like(query.username() != null && !query.username().isBlank(), SystemUser::getUsername, query.username())
                         .eq(query.status() != null, SystemUser::getStatus, query.status())
                         .orderByAsc(SystemUser::getId));
-        return PageResult.from(page, user -> toView(tenantId, user));
+        Set<Long> platformRoleIds = loadPlatformRoleIds(tenantId);
+        return PageResult.from(page, user -> toView(tenantId, user, platformRoleIds));
     }
 
     /** 获取当前租户内指定用户的详情。 */
     @Override
     public UserVO get(long userId) {
         long tenantId = TenantContextHolder.requireTenantId();
-        return toView(tenantId, requireUser(tenantId, userId));
+        return toView(tenantId, requireUser(tenantId, userId), loadPlatformRoleIds(tenantId));
     }
 
     /** 创建用户、校验角色并建立初始角色关系。 */
@@ -128,6 +131,7 @@ public class UserServiceImpl implements UserService {
         long tenantId = TenantContextHolder.requireTenantId();
         lockTenantForAdminInvariant(tenantId);
         SystemUser user = requireUser(tenantId, userId);
+        assertPlatformAdminSelfManaged(user);
         if (command.username() != null) {
             String username = IdentityNormalizer.requireManagement(command.username());
             if (!username.equals(user.getUsername())
@@ -156,7 +160,7 @@ public class UserServiceImpl implements UserService {
         changeStatus(tenantId, userId, UserStatus.ENABLED);
     }
 
-    /** 禁用非当前用户，同时保护租户最后一个有效管理员。 */
+    /** 禁用非当前用户，同时保护平台管理员账号。 */
     @Override
     @Transactional
     public void disable(long userId, long currentUserId) {
@@ -166,7 +170,7 @@ public class UserServiceImpl implements UserService {
         long tenantId = TenantContextHolder.requireTenantId();
         lockTenantForAdminInvariant(tenantId);
         SystemUser user = requireUser(tenantId, userId);
-        assertNotLastEnabledTenantAdmin(tenantId, user);
+        assertNotPlatformAdmin(user);
         if (user.getStatus() != UserStatus.DISABLED) {
             user.setStatus(UserStatus.DISABLED);
             userMapper.updateById(user);
@@ -182,6 +186,7 @@ public class UserServiceImpl implements UserService {
         long tenantId = TenantContextHolder.requireTenantId();
         lockTenantForAdminInvariant(tenantId);
         SystemUser user = requireUser(tenantId, userId);
+        assertPlatformAdminSelfManaged(user);
         user.setPasswordHash(passwordEncoder.encode(command.password()));
         user.setPasswordChangedAt(LocalDateTime.now());
         userMapper.updateById(user);
@@ -199,13 +204,13 @@ public class UserServiceImpl implements UserService {
         long tenantId = TenantContextHolder.requireTenantId();
         lockTenantForAdminInvariant(tenantId);
         SystemUser user = requireUser(tenantId, userId);
-        assertNotLastEnabledTenantAdmin(tenantId, user);
+        assertNotPlatformAdmin(user);
         userMapper.logicalDeleteWithAudit(tenantId, userId, currentAuditorId(), LocalDateTime.now());
         userRoleMapper.deleteByUser(tenantId, userId);
         revokeAfterCommit(tenantId, userId);
     }
 
-    /** 替换用户角色，并保证租户至少保留一个有效管理员。 */
+    /** 替换普通用户角色并撤销旧会话，平台管理员角色不允许变更。 */
     @Override
     @Transactional
     public void assignRoles(long userId, Set<Long> roleIds) {
@@ -213,7 +218,7 @@ public class UserServiceImpl implements UserService {
         lockTenantForAdminInvariant(tenantId);
         validateRoleIds(tenantId, roleIds);
         SystemUser user = requireUser(tenantId, userId);
-        assertRoleReplacementPreservesTenantAdmin(tenantId, user, roleIds);
+        assertNotPlatformAdmin(user);
         Set<Long> currentRoleIds = Set.copyOf(userRoleMapper.selectRoleIdsByUserId(tenantId, userId));
         if (currentRoleIds.equals(roleIds)) {
             return;
@@ -262,6 +267,7 @@ public class UserServiceImpl implements UserService {
     private void changeStatus(long tenantId, long userId, UserStatus status) {
         lockTenantForAdminInvariant(tenantId);
         SystemUser user = requireUser(tenantId, userId);
+        assertNotPlatformAdmin(user);
         if (user.getStatus() != status) {
             user.setStatus(status);
             userMapper.updateById(user);
@@ -311,33 +317,37 @@ public class UserServiceImpl implements UserService {
     }
 
     /** 将用户实体及其角色 ID 组装为用户视图。 */
-    private UserVO toView(long tenantId, SystemUser user) {
+    private UserVO toView(long tenantId, SystemUser user, Set<Long> platformRoleIds) {
         List<Long> roleIds = userRoleMapper.selectRoleIdsByUserId(tenantId, user.getId());
-        return UserVO.from(user, roleIds);
+        return UserVO.from(user, roleIds, roleIds.stream().anyMatch(platformRoleIds::contains));
     }
 
-    /** 阻止停用或删除租户最后一个有效管理员。 */
-    private void assertNotLastEnabledTenantAdmin(long tenantId, SystemUser user) {
-        if (user.getStatus() == UserStatus.ENABLED
-                && roleMapper.existsTenantAdminRole(tenantId, user.getId())
-                && roleMapper.countEnabledTenantAdminUsers(tenantId) <= 1) {
-            throw new BusinessException(UserErrorCode.LAST_TENANT_ADMIN);
+    /** 每次列表请求只查询一次平台角色，避免逐用户追加身份查询。 */
+    private Set<Long> loadPlatformRoleIds(long tenantId) {
+        return roleMapper.selectList(Wrappers.<SystemRole>query().lambda()
+                        .eq(SystemRole::getTenantId, tenantId)
+                        .eq(SystemRole::getRoleCode, "PLATFORM_ADMIN")
+                        .eq(SystemRole::getBuiltIn, true)
+                        .eq(SystemRole::getStatus, RoleStatus.ENABLED)
+                        .eq(SystemRole::getDeleted, false))
+                .stream().map(SystemRole::getId).collect(java.util.stream.Collectors.toSet());
+    }
+
+    /** 平台管理员只能维护自己的非授权资料和密码。 */
+    private void assertPlatformAdminSelfManaged(SystemUser user) {
+        if (userMapper.existsPlatformAdmin(user.getTenantId(), user.getId()) && currentAuditorId() != user.getId()) {
+            throw new BusinessException(UserErrorCode.PLATFORM_ADMIN_PROTECTED);
         }
     }
 
-    /** 阻止角色替换移除租户最后一个有效管理员资格。 */
-    private void assertRoleReplacementPreservesTenantAdmin(long tenantId, SystemUser user, Set<Long> roleIds) {
-        boolean keepsTenantAdminRole = !roleIds.isEmpty()
-                && roleMapper.containsTenantAdminRole(tenantId, roleIds);
-        if (user.getStatus() == UserStatus.ENABLED
-                && roleMapper.existsTenantAdminRole(tenantId, user.getId())
-                && !keepsTenantAdminRole
-                && roleMapper.countEnabledTenantAdminUsers(tenantId) <= 1) {
-            throw new BusinessException(UserErrorCode.LAST_TENANT_ADMIN);
+    /** 平台管理员账号不能通过租户用户管理启停、删除或变更角色。 */
+    private void assertNotPlatformAdmin(SystemUser user) {
+        if (userMapper.existsPlatformAdmin(user.getTenantId(), user.getId())) {
+            throw new BusinessException(UserErrorCode.PLATFORM_ADMIN_PROTECTED);
         }
     }
 
-    /** 锁定租户行以串行化管理员不变量检查。 */
+    /** 锁定租户行以串行化认证和用户权限变更。 */
     private void lockTenantForAdminInvariant(long tenantId) {
         tenantMapper.lockByIdForAdminInvariant(tenantId);
     }

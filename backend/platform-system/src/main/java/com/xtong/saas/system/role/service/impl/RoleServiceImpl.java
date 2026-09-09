@@ -42,8 +42,6 @@ public class RoleServiceImpl implements RoleService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(RoleServiceImpl.class);
 
-    private static final String TENANT_ADMIN_ROLE_CODE = "TENANT_ADMIN";
-
     private final SystemRoleMapper roleMapper;
     private final SystemUserRoleMapper userRoleMapper;
     private final SystemRoleMenuMapper roleMenuMapper;
@@ -110,6 +108,9 @@ public class RoleServiceImpl implements RoleService {
     @Transactional(rollbackFor = Exception.class)
     public String create(CreateRoleDTO command) {
         long tenantId = TenantContextHolder.requireTenantId();
+        if ("PLATFORM_ADMIN".equalsIgnoreCase(command.roleCode().strip())) {
+            throw new BusinessException(RoleErrorCode.BUILT_IN_ROLE_PROTECTED);
+        }
         if (roleMapper.countByTenantAndCodeIncludingDeleted(tenantId, command.roleCode()) > 0) {
             throw new BusinessException(RoleErrorCode.ROLE_CODE_ALREADY_EXISTS);
         }
@@ -230,7 +231,7 @@ public class RoleServiceImpl implements RoleService {
 
     /** 阻止修改受保护的内置角色。 */
     private void assertNotProtected(SystemRole role) {
-        if (Boolean.TRUE.equals(role.getBuiltIn()) || TENANT_ADMIN_ROLE_CODE.equals(role.getRoleCode())) {
+        if (Boolean.TRUE.equals(role.getBuiltIn()) || "PLATFORM_ADMIN".equals(role.getRoleCode())) {
             throw new BusinessException(RoleErrorCode.BUILT_IN_ROLE_PROTECTED);
         }
     }
@@ -238,7 +239,7 @@ public class RoleServiceImpl implements RoleService {
     /** 校验菜单 ID 集合完整且全部指向有效菜单资源。 */
     private void validateMenuIds(Set<Long> menuIds) {
         if (menuIds == null || menuIds.stream().anyMatch(menuId -> menuId == null || menuId <= 0)
-                || (!menuIds.isEmpty() && menuMapper.countEnabledByIds(menuIds) != menuIds.size())) {
+                || (!menuIds.isEmpty() && menuMapper.countEnabledTenantAssignableByIds(menuIds) != menuIds.size())) {
             throw new BusinessException(RoleErrorCode.INVALID_MENU_ASSIGNMENT);
         }
     }

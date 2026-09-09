@@ -69,6 +69,44 @@ class UserServiceTest {
     }
 
     @Test
+    void tenantManagementShouldNotChangePlatformAdministratorSecurityState() {
+        SystemUser platformAdmin = user(10L, UserStatus.ENABLED);
+        when(userMapper.existsPlatformAdmin(1L, 10L)).thenReturn(true);
+        when(userMapper.selectOne(any())).thenReturn(platformAdmin);
+
+        List<Runnable> forbiddenOperations = List.of(
+                () -> service.disable(10L, 11L),
+                () -> service.enable(10L),
+                () -> service.delete(10L, 11L),
+                () -> service.assignRoles(10L, Set.of()),
+                () -> service.resetPassword(10L, new ResetPasswordDTO("NewPassword123")),
+                () -> service.update(10L, new UpdateUserDTO(null, "Admin", null, null)));
+
+        forbiddenOperations.forEach(operation -> TenantScope.run(1L, () -> assertThatThrownBy(operation::run)
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).getErrorCode())
+                .isEqualTo(UserErrorCode.PLATFORM_ADMIN_PROTECTED)));
+        verify(userMapper, never()).updateById(any(SystemUser.class));
+        verify(userMapper, never()).logicalDeleteWithAudit(anyLong(), anyLong(), anyLong(), any());
+        verify(userRoleMapper, never()).deleteByUser(anyLong(), anyLong());
+    }
+
+    @Test
+    void shouldRejectPlatformRoleOnUserCreationAndAssignment() {
+        when(roleMapper.countByTenantAndIds(1L, Set.of(99L))).thenReturn(0L);
+        TenantScope.run(1L, () -> {
+            assertThatThrownBy(() -> service.create(createCommand(Set.of(99L))))
+                    .extracting(exception -> ((BusinessException) exception).getErrorCode())
+                    .isEqualTo(UserErrorCode.INVALID_ROLE_ASSIGNMENT);
+            assertThatThrownBy(() -> service.assignRoles(10L, Set.of(99L)))
+                    .extracting(exception -> ((BusinessException) exception).getErrorCode())
+                    .isEqualTo(UserErrorCode.INVALID_ROLE_ASSIGNMENT);
+        });
+        verify(userMapper, never()).insert(any(SystemUser.class));
+        verify(userRoleMapper, never()).insertBatch(anyList());
+    }
+
+    @Test
     void shouldRejectDuplicateUsernameInCurrentTenant() {
         when(userMapper.countByTenantAndUsernameIncludingDeleted(1L, "alice")).thenReturn(1L);
 
@@ -239,41 +277,29 @@ class UserServiceTest {
     }
 
     @Test
-    void shouldRejectRemovingLastTenantAdminRoleUnderTenantLock() {
-        SystemUser user = user(10L, UserStatus.ENABLED);
-        when(roleMapper.countByTenantAndIds(1L, Set.of(8L))).thenReturn(1L);
-        when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
-        when(userMapper.selectOne(any())).thenReturn(user);
-        when(roleMapper.existsTenantAdminRole(1L, 10L)).thenReturn(true);
-        when(roleMapper.containsTenantAdminRole(1L, Set.of(8L))).thenReturn(false);
-        when(roleMapper.countEnabledTenantAdminUsers(1L)).thenReturn(1L);
+    void shouldRemoveAllRolesFromEnabledNonPlatformUserUnderTenantLock() {
+        when(userMapper.selectOne(any())).thenReturn(user(10L, UserStatus.ENABLED));
+        when(userRoleMapper.selectRoleIdsByUserId(1L, 10L)).thenReturn(List.of(8L));
 
-        TenantScope.run(1L, () -> assertThatThrownBy(() -> service.assignRoles(10L, Set.of(8L)))
-                .isInstanceOf(BusinessException.class)
-                .extracting(exception -> ((BusinessException) exception).getErrorCode())
-                .isEqualTo(UserErrorCode.LAST_TENANT_ADMIN));
+        TenantScope.run(1L, () -> service.assignRoles(10L, Set.of()));
 
-        org.mockito.InOrder order = inOrder(tenantMapper, userMapper);
+        org.mockito.InOrder order = inOrder(tenantMapper, userMapper, userRoleMapper);
         order.verify(tenantMapper).lockByIdForAdminInvariant(1L);
         order.verify(userMapper).selectOne(any());
-        verify(userRoleMapper, never()).deleteByUser(1L, 10L);
+        verify(userRoleMapper).deleteByUser(1L, 10L);
+        verify(userMapper).incrementAuthVersion(1L, 10L);
     }
 
     @Test
-    void shouldRejectDisablingLastEnabledTenantAdministrator() {
+    void shouldDisableEnabledNonPlatformUserWithoutAdministratorCountCheck() {
         SystemUser user = user(10L, UserStatus.ENABLED);
         when(userMapper.selectOne(any())).thenReturn(user);
-        when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
-        when(roleMapper.existsTenantAdminRole(1L, 10L)).thenReturn(true);
-        when(roleMapper.countEnabledTenantAdminUsers(1L)).thenReturn(1L);
 
-        TenantScope.run(1L, () -> assertThatThrownBy(() -> service.disable(10L, 11L))
-                .isInstanceOf(BusinessException.class)
-                .extracting(exception -> ((BusinessException) exception).getErrorCode())
-                .isEqualTo(UserErrorCode.LAST_TENANT_ADMIN));
+        TenantScope.run(1L, () -> service.disable(10L, 11L));
 
-        verify(userMapper, never()).updateById(any(SystemUser.class));
-        verify(tenantMapper).lockByIdForAdminInvariant(1L);
+        assertThat(user.getStatus()).isEqualTo(UserStatus.DISABLED);
+        verify(userMapper).updateById(user);
+        verify(userMapper).incrementAuthVersion(1L, 10L);
     }
 
     @Test
@@ -295,7 +321,6 @@ class UserServiceTest {
         SystemUser user = user(10L, UserStatus.ENABLED);
         when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
         when(userMapper.selectOne(any())).thenReturn(user);
-        when(roleMapper.existsTenantAdminRole(1L, 10L)).thenReturn(false);
         TransactionSynchronizationManager.initSynchronization();
 
         TenantScope.run(1L, () -> service.disable(10L, 11L));
@@ -309,7 +334,6 @@ class UserServiceTest {
         SystemUser user = user(10L, UserStatus.ENABLED);
         when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
         when(userMapper.selectOne(any())).thenReturn(user);
-        when(roleMapper.existsTenantAdminRole(1L, 10L)).thenReturn(false);
         doThrow(new IllegalStateException("redis unavailable"))
                 .when(sessionRevocationService).revokeAllUserSessions(1L, 10L);
         TransactionSynchronizationManager.initSynchronization();

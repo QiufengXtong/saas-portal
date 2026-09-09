@@ -13,7 +13,7 @@ const collapsed = ref(false)
 const activePath = computed(() => route.path)
 const canViewUsers = computed(() => authStore.hasPermission('system:user:list'))
 const canViewRoles = computed(() => authStore.hasPermission('system:role:list'))
-const canViewMenus = computed(() => authStore.hasPermission('system:menu:list'))
+const canViewMenus = computed(() => authStore.hasPermission('system:platform:admin') && authStore.hasPermission('system:menu:list'))
 
 const handleLogout = async () => {
     await authStore.logout()

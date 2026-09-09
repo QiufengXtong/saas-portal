@@ -4,6 +4,7 @@ import com.xtong.saas.common.exception.BusinessException;
 import com.xtong.saas.common.mybatis.AuditorProvider;
 import com.xtong.saas.system.auth.api.SessionRevocationService;
 import com.xtong.saas.system.menu.mapper.SystemMenuMapper;
+import com.xtong.saas.system.role.dto.CreateRoleDTO;
 import com.xtong.saas.system.role.entity.SystemRole;
 import com.xtong.saas.system.role.entity.SystemRoleMenu;
 import com.xtong.saas.system.role.enums.RoleStatus;
@@ -31,6 +32,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.inOrder;
@@ -126,10 +128,10 @@ class RoleServiceTest {
     }
 
     @Test
-    void shouldRejectAssigningMenusToTenantAdminByCodeEvenWhenBuiltInFlagIsCorrupt() {
-        SystemRole tenantAdmin = role(8L, false);
-        tenantAdmin.setRoleCode("TENANT_ADMIN");
-        when(roleMapper.selectOne(any())).thenReturn(tenantAdmin);
+    void shouldRejectAssigningMenusToPlatformAdminEvenWhenBuiltInFlagIsCorrupt() {
+        SystemRole platformAdmin = role(8L, false);
+        platformAdmin.setRoleCode("PLATFORM_ADMIN");
+        when(roleMapper.selectOne(any())).thenReturn(platformAdmin);
 
         TenantScope.run(1L, () -> assertThatThrownBy(() -> service.assignMenus(8L, Set.of()))
                 .isInstanceOf(BusinessException.class)
@@ -140,10 +142,48 @@ class RoleServiceTest {
     }
 
     @Test
+    void shouldAssignMenusToManuallyCreatedTenantAdminAndRevokeSessions() {
+        SystemRole tenantAdmin = role(8L, false);
+        tenantAdmin.setRoleCode("TENANT_ADMIN");
+        when(roleMapper.selectOne(any())).thenReturn(tenantAdmin);
+        when(menuMapper.countEnabledTenantAssignableByIds(Set.of(101L))).thenReturn(1L);
+        when(userRoleMapper.selectUserIdsByRole(1L, 8L)).thenReturn(List.of(10L));
+
+        TenantScope.run(1L, () -> service.assignMenus(8L, Set.of(101L)));
+
+        ArgumentCaptor<List<SystemRoleMenu>> relations = ArgumentCaptor.captor();
+        verify(roleMenuMapper).deleteByRole(1L, 8L);
+        verify(roleMenuMapper).insertBatch(relations.capture());
+        assertThat(relations.getValue()).singleElement().satisfies(relation -> {
+            assertThat(relation.getTenantId()).isEqualTo(1L);
+            assertThat(relation.getRoleId()).isEqualTo(8L);
+            assertThat(relation.getMenuId()).isEqualTo(101L);
+        });
+        verify(userMapper).incrementAuthVersions(1L, List.of(10L));
+        verify(sessionRevocationService).revokeAllUserSessions(1L, 10L);
+    }
+
+    @Test
+    void shouldDisableAndDeleteUnusedManuallyCreatedTenantAdmin() {
+        SystemRole tenantAdmin = role(8L, false);
+        tenantAdmin.setRoleCode("TENANT_ADMIN");
+        when(roleMapper.selectOne(any())).thenReturn(tenantAdmin);
+
+        TenantScope.run(1L, () -> {
+            service.disable(8L);
+            service.delete(8L);
+        });
+
+        assertThat(tenantAdmin.getStatus()).isEqualTo(RoleStatus.DISABLED);
+        verify(roleMapper).updateById(tenantAdmin);
+        verify(roleMapper).logicalDeleteWithAudit(eq(1L), eq(8L), eq(42L), any());
+    }
+
+    @Test
     void shouldReplaceMenusAndRevokeAffectedUsersOnlyAfterCommit() {
         when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
         when(roleMapper.selectOne(any())).thenReturn(role(8L, false));
-        when(menuMapper.countEnabledByIds(Set.of(101L, 102L))).thenReturn(2L);
+        when(menuMapper.countEnabledTenantAssignableByIds(Set.of(101L, 102L))).thenReturn(2L);
         when(userRoleMapper.selectUserIdsByRole(1L, 8L)).thenReturn(List.of(10L, 11L));
         TransactionSynchronizationManager.initSynchronization();
 
@@ -173,7 +213,7 @@ class RoleServiceTest {
     void shouldLockTenantBeforeReplacingMenus() {
         when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
         when(roleMapper.selectOne(any())).thenReturn(role(8L, false));
-        when(menuMapper.countEnabledByIds(Set.of(101L))).thenReturn(1L);
+        when(menuMapper.countEnabledTenantAssignableByIds(Set.of(101L))).thenReturn(1L);
         when(userRoleMapper.selectUserIdsByRole(1L, 8L)).thenReturn(List.of());
 
         TenantScope.run(1L, () -> service.assignMenus(8L, Set.of(101L)));
@@ -181,7 +221,7 @@ class RoleServiceTest {
         org.mockito.InOrder order = inOrder(tenantMapper, roleMapper, menuMapper, userRoleMapper, roleMenuMapper);
         order.verify(tenantMapper).lockByIdForAdminInvariant(1L);
         order.verify(roleMapper).selectOne(any());
-        order.verify(menuMapper).countEnabledByIds(Set.of(101L));
+        order.verify(menuMapper).countEnabledTenantAssignableByIds(Set.of(101L));
         order.verify(userRoleMapper).selectUserIdsByRole(1L, 8L);
         order.verify(roleMenuMapper).deleteByRole(1L, 8L);
         order.verify(roleMenuMapper).insertBatch(anyList());
@@ -197,7 +237,7 @@ class RoleServiceTest {
 
         verify(roleMenuMapper).deleteByRole(1L, 8L);
         verify(roleMenuMapper, never()).insertBatch(anyList());
-        verify(menuMapper, never()).countEnabledByIds(any());
+        verify(menuMapper, never()).countEnabledTenantAssignableByIds(any());
         verify(userMapper).incrementAuthVersions(1L, List.of(10L));
     }
 
@@ -205,7 +245,7 @@ class RoleServiceTest {
     void shouldTreatIdenticalMenuAssignmentAsNoOpWithoutVersionIncrement() {
         when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
         when(roleMapper.selectOne(any())).thenReturn(role(8L, false));
-        when(menuMapper.countEnabledByIds(Set.of(101L))).thenReturn(1L);
+        when(menuMapper.countEnabledTenantAssignableByIds(Set.of(101L))).thenReturn(1L);
         when(roleMenuMapper.selectMenuIdsByRole(1L, 8L)).thenReturn(List.of(101L));
 
         TenantScope.run(1L, () -> service.assignMenus(8L, Set.of(101L)));
@@ -218,7 +258,7 @@ class RoleServiceTest {
     void shouldNotRevokeSessionsWhenMenuAssignmentRollsBack() {
         when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
         when(roleMapper.selectOne(any())).thenReturn(role(8L, false));
-        when(menuMapper.countEnabledByIds(Set.of(101L))).thenReturn(1L);
+        when(menuMapper.countEnabledTenantAssignableByIds(Set.of(101L))).thenReturn(1L);
         when(userRoleMapper.selectUserIdsByRole(1L, 8L)).thenReturn(List.of(10L));
         TransactionSynchronizationManager.initSynchronization();
 
@@ -232,7 +272,7 @@ class RoleServiceTest {
     void shouldContinueRevokingLaterUsersWhenFirstRedisCleanupFails() {
         when(tenantMapper.lockByIdForAdminInvariant(1L)).thenReturn(1L);
         when(roleMapper.selectOne(any())).thenReturn(role(8L, false));
-        when(menuMapper.countEnabledByIds(Set.of(101L))).thenReturn(1L);
+        when(menuMapper.countEnabledTenantAssignableByIds(Set.of(101L))).thenReturn(1L);
         when(userRoleMapper.selectUserIdsByRole(1L, 8L)).thenReturn(List.of(10L, 11L));
         doThrow(new IllegalStateException("redis unavailable"))
                 .when(sessionRevocationService).revokeAllUserSessions(1L, 10L);
@@ -348,9 +388,19 @@ class RoleServiceTest {
     }
 
     @Test
+    void shouldReservePlatformAdminRoleCodeForBootstrap() {
+        TenantScope.run(1L, () -> assertThatThrownBy(() -> service.create(
+                new CreateRoleDTO("platform_admin", "伪造管理员")))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).getErrorCode())
+                .isEqualTo(RoleErrorCode.BUILT_IN_ROLE_PROTECTED));
+        verify(roleMapper, never()).insert(any(SystemRole.class));
+    }
+
+    @Test
     void shouldRejectMenuIdsOutsideEnabledGlobalMenuSet() {
         when(roleMapper.selectOne(any())).thenReturn(role(8L, false));
-        when(menuMapper.countEnabledByIds(Set.of(101L, 999L))).thenReturn(1L);
+        when(menuMapper.countEnabledTenantAssignableByIds(Set.of(101L, 999L))).thenReturn(1L);
 
         TenantScope.run(1L, () -> assertThatThrownBy(() -> service.assignMenus(8L, Set.of(101L, 999L)))
                 .isInstanceOf(BusinessException.class)

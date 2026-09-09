@@ -42,6 +42,7 @@
           AND m.status = 'ENABLED'
           AND m.deleted = 0
           AND m.type = 'BUTTON'
+          AND m.permission_scope = 'TENANT'
           AND m.permission_code IS NOT NULL
           AND rm.role_id IN
           <foreach collection="roleIds" item="roleId" open="(" separator="," close=")">
@@ -58,7 +59,7 @@
         WHERE rm.menu_id = #{menuId} AND r.deleted = 0
     </select>
 
-    <!-- 权限变化会影响直接关联角色用户，租户管理员因自动拥有全部权限也始终受影响。 -->
+    <!-- 权限变化会影响直接关联的租户角色用户，以及对应范围的自动授权用户。 -->
     <select id="selectUsersAffectedByMenu"
             resultType="com.xtong.saas.system.menu.model.MenuAffectedUser">
         SELECT DISTINCT affected.tenant_id AS tenantId, affected.user_id AS userId
@@ -70,25 +71,27 @@
             INNER JOIN sys_user u ON u.id = ur.user_id AND u.tenant_id = ur.tenant_id
             WHERE rm.menu_id = #{menuId} AND r.deleted = 0 AND u.deleted = 0
             UNION
-            SELECT ur.tenant_id, ur.user_id
-            FROM sys_user_role ur
+            SELECT u.tenant_id, u.id AS user_id
+            FROM sys_user u
+            INNER JOIN sys_user_role ur ON ur.user_id = u.id AND ur.tenant_id = u.tenant_id
             INNER JOIN sys_role r ON r.id = ur.role_id AND r.tenant_id = ur.tenant_id
-            INNER JOIN sys_user u ON u.id = ur.user_id AND u.tenant_id = ur.tenant_id
-            WHERE r.role_code = 'TENANT_ADMIN' AND r.built_in = 1
-              AND r.status = 'ENABLED' AND r.deleted = 0 AND u.deleted = 0
+            WHERE r.role_code = 'PLATFORM_ADMIN' AND r.built_in = 1
+              AND r.status = 'ENABLED' AND r.deleted = 0
+              AND u.status = 'ENABLED' AND u.deleted = 0
         ) affected
         ORDER BY affected.tenant_id, affected.user_id
     </select>
 
-    <!-- 新按钮会自动进入租户管理员权限集合，因此只需定位全部有效内置管理员角色用户。 -->
-    <select id="selectTenantAdminUsers"
+    <!-- 平台管理员自动获得所有按钮权限；普通角色只通过显式关联受影响。 -->
+    <select id="selectPlatformAdminUsers"
             resultType="com.xtong.saas.system.menu.model.MenuAffectedUser">
-        SELECT DISTINCT ur.tenant_id AS tenantId, ur.user_id AS userId
-        FROM sys_user_role ur
+        SELECT DISTINCT u.tenant_id AS tenantId, u.id AS userId
+        FROM sys_user u
+        INNER JOIN sys_user_role ur ON ur.user_id = u.id AND ur.tenant_id = u.tenant_id
         INNER JOIN sys_role r ON r.id = ur.role_id AND r.tenant_id = ur.tenant_id
-        INNER JOIN sys_user u ON u.id = ur.user_id AND u.tenant_id = ur.tenant_id
-        WHERE r.role_code = 'TENANT_ADMIN' AND r.built_in = 1
-          AND r.status = 'ENABLED' AND r.deleted = 0 AND u.deleted = 0
-        ORDER BY ur.tenant_id, ur.user_id
+        WHERE r.role_code = 'PLATFORM_ADMIN' AND r.built_in = 1
+          AND r.status = 'ENABLED' AND r.deleted = 0
+          AND u.status = 'ENABLED' AND u.deleted = 0
+        ORDER BY u.tenant_id, u.id
     </select>
 </mapper>

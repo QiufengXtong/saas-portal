@@ -1,6 +1,7 @@
 /** 文件作用：定义用户、角色、菜单及其管理命令的前端接口契约。 */
 export type EnabledStatus = 'ENABLED' | 'DISABLED'
 export type MenuType = 'DIRECTORY' | 'MENU' | 'BUTTON'
+export type PermissionScope = 'PLATFORM' | 'TENANT'
 
 export interface UserView {
     id: string
@@ -10,6 +11,7 @@ export interface UserView {
     email: string | null
     mobile: string | null
     status: EnabledStatus
+    platformAdmin: boolean
     roleIds: string[]
     passwordChangedAt: string | null
     lastLoginAt: string | null
@@ -67,6 +69,7 @@ export interface MenuTreeNode {
     component: string | null
     icon: string | null
     permissionCode: string | null
+    permissionScope: PermissionScope
     sortOrder: number
     visible: boolean
     status: EnabledStatus

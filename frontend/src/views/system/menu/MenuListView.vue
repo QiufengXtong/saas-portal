@@ -251,6 +251,13 @@ onMounted(load)
         >
           <template #default="{row}">
             <el-tag
+              v-if="row.permissionScope === 'PLATFORM'"
+              type="danger"
+              size="small"
+            >
+              平台
+            </el-tag>
+            <el-tag
               v-if="row.builtIn"
               type="warning"
               size="small"

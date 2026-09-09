@@ -11,6 +11,18 @@
           AND username = #{username}
     </select>
 
+    <!-- 平台身份来自仅由初始化建立的内置 PLATFORM_ADMIN 角色，并严格校验租户、状态与逻辑删除。 -->
+    <select id="existsPlatformAdmin" resultType="boolean">
+        SELECT CASE WHEN COUNT(*) > 0 THEN TRUE ELSE FALSE END
+        FROM sys_user u
+        INNER JOIN sys_user_role ur ON ur.user_id = u.id AND ur.tenant_id = u.tenant_id
+        INNER JOIN sys_role r ON r.id = ur.role_id AND r.tenant_id = ur.tenant_id
+        WHERE u.tenant_id = #{tenantId} AND u.id = #{userId}
+          AND u.status = 'ENABLED' AND u.deleted = 0
+          AND r.role_code = 'PLATFORM_ADMIN' AND r.built_in = 1
+          AND r.status = 'ENABLED' AND r.deleted = 0
+    </select>
+
     <!-- 原子增加指定租户内单个未删除用户的认证版本。 -->
     <update id="incrementAuthVersion">
         UPDATE sys_user

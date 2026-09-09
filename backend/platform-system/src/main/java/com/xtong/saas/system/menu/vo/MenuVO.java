@@ -3,6 +3,7 @@ package com.xtong.saas.system.menu.vo;
 import com.xtong.saas.system.menu.entity.SystemMenu;
 import com.xtong.saas.system.menu.enums.MenuStatus;
 import com.xtong.saas.system.menu.enums.MenuType;
+import com.xtong.saas.system.menu.enums.PermissionScope;
 
 import java.time.LocalDateTime;
 
@@ -16,6 +17,7 @@ public record MenuVO(
         String component,
         String icon,
         String permissionCode,
+        PermissionScope permissionScope,
         Integer sortOrder,
         boolean visible,
         MenuStatus status,
@@ -34,6 +36,7 @@ public record MenuVO(
                 menu.getComponent(),
                 menu.getIcon(),
                 menu.getPermissionCode(),
+                menu.getPermissionScope(),
                 menu.getSortOrder(),
                 Boolean.TRUE.equals(menu.getVisible()),
                 menu.getStatus(),

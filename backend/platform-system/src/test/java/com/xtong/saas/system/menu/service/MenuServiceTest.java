@@ -13,6 +13,7 @@ import com.xtong.saas.system.menu.dto.UpdateMenuDTO;
 import com.xtong.saas.system.menu.entity.SystemMenu;
 import com.xtong.saas.system.menu.enums.MenuStatus;
 import com.xtong.saas.system.menu.enums.MenuType;
+import com.xtong.saas.system.menu.enums.PermissionScope;
 import com.xtong.saas.system.menu.exception.MenuErrorCode;
 import com.xtong.saas.system.menu.mapper.SystemMenuMapper;
 import com.xtong.saas.system.menu.model.MenuAffectedUser;
@@ -91,20 +92,24 @@ class MenuServiceTest {
         SystemMenu roleList = menu(12001L, 120L, "role-list", MenuType.BUTTON, 1);
         roleList.setPermissionCode("system:role:list");
         roleList.setVisible(false);
+        SystemMenu platformPermission = menu(13001L, 130L, "menu-list", MenuType.BUTTON, 3);
+        platformPermission.setPermissionCode("system:menu:list");
+        platformPermission.setPermissionScope(PermissionScope.PLATFORM);
         SystemMenu menuNode = menu(110L, 100L, "user", MenuType.MENU, 1);
         menuNode.setPermissionCode("must-not-return");
-        when(menuMapper.selectList(any())).thenReturn(List.of(userList, menuNode, roleList));
+        when(menuMapper.selectList(any())).thenReturn(List.of(userList, menuNode, roleList, platformPermission));
 
         Set<String> codes = service.getPermissionCodes();
 
         assertThat(codes).containsExactly("system:role:list", "system:user:list");
+        assertThat(service.getPlatformPermissionCodes()).containsExactly("system:menu:list");
     }
 
     @Test
-    void shouldCreateButtonAndInvalidateTenantAdministrators() {
+    void shouldCreateButtonAndInvalidatePlatformAdministrators() {
         SystemMenu parent = menu(110L, 100L, "user", MenuType.MENU, 10);
         when(menuMapper.selectOne(any())).thenReturn(parent);
-        when(roleMenuMapper.selectTenantAdminUsers()).thenReturn(List.of(new MenuAffectedUser(1L, 9L)));
+        when(roleMenuMapper.selectPlatformAdminUsers()).thenReturn(List.of(new MenuAffectedUser(1L, 9L)));
         doAnswer(invocation -> {
             ((SystemMenu) invocation.getArgument(0)).setId(900L);
             return 1;
@@ -115,6 +120,9 @@ class MenuServiceTest {
                 "system:user:export", 20, false));
 
         assertThat(id).isEqualTo("900");
+        ArgumentCaptor<SystemMenu> createdMenu = ArgumentCaptor.forClass(SystemMenu.class);
+        verify(menuMapper).insert(createdMenu.capture());
+        assertThat(createdMenu.getValue().getPermissionScope()).isEqualTo(PermissionScope.TENANT);
         verify(userMapper).incrementAuthVersions(1L, List.of(9L));
         verify(sessionRevocationService).revokeAllUserSessions(1L, 9L);
     }
@@ -139,6 +147,24 @@ class MenuServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(MenuErrorCode.MENU_CYCLE);
         verify(menuMapper, never()).updateById(any(SystemMenu.class));
+    }
+
+    @Test
+    void shouldRejectMovingMenuAcrossPermissionScopes() {
+        SystemMenu tenantMenu = menu(110L, 100L, "tenant", MenuType.MENU, 1);
+        tenantMenu.setRoutePath("/tenant");
+        tenantMenu.setComponent("TenantView");
+        SystemMenu platformParent = menu(130L, null, "platform", MenuType.DIRECTORY, 1);
+        platformParent.setPermissionScope(PermissionScope.PLATFORM);
+        when(menuMapper.selectOne(any())).thenReturn(tenantMenu, platformParent);
+
+        assertThatThrownBy(() -> service.update(110L, new UpdateMenuDTO(
+                130L, "tenant", MenuType.MENU, "/tenant", "TenantView", null, null, 1, true)))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(MenuErrorCode.INVALID_PARENT);
+
+        verify(menuMapper, never()).updateById(any(SystemMenu.class));
+        verifyNoInteractions(roleMenuMapper, userMapper, sessionRevocationService);
     }
 
     @Test

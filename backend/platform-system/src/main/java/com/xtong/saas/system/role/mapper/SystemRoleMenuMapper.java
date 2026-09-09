@@ -30,11 +30,11 @@ public interface SystemRoleMenuMapper extends BaseMapper<SystemRoleMenu> {
     @InterceptorIgnore(tenantLine = "true")
     long countByMenuId(@Param("menuId") long menuId);
 
-    /** 跨租户查询菜单权限变化影响的普通角色用户及全部租户管理员。 */
+    /** 跨租户按权限范围查询菜单变化影响的角色用户及自动授权用户。 */
     @InterceptorIgnore(tenantLine = "true")
     List<MenuAffectedUser> selectUsersAffectedByMenu(@Param("menuId") long menuId);
 
-    /** 跨租户查询新增按钮权限后需要重建权限快照的全部租户管理员。 */
+    /** 跨租户查询自动获得全部权限并需要重建快照的平台管理员。 */
     @InterceptorIgnore(tenantLine = "true")
-    List<MenuAffectedUser> selectTenantAdminUsers();
+    List<MenuAffectedUser> selectPlatformAdminUsers();
 }

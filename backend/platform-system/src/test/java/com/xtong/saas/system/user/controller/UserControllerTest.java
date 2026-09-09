@@ -59,7 +59,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** 以独立 HTTP 契约矩阵验证 19 个系统管理端点的认证、授权、绑定和服务委派。 */
+/** 以独立 HTTP 契约矩阵验证系统管理端点的认证、授权、绑定和服务委派。 */
 @SpringJUnitWebConfig(UserControllerTest.TestConfiguration.class)
 @TestPropertySource(properties = {
         "saas.auth.jwt-secret=test-only-secret-with-at-least-32-bytes",
@@ -139,6 +139,36 @@ class UserControllerTest {
         mockMvc.perform(endpoint.request())
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(1101));
+    }
+
+    @ParameterizedTest(name = "平台端点允许双重权限: {0}")
+    @MethodSource("platformManagementEndpointContract")
+    void platformEndpointShouldRequirePlatformIdentityAndExactAuthority(EndpointContract endpoint) throws Exception {
+        authenticate(Set.of("system:platform:admin", endpoint.authority()));
+
+        mockMvc.perform(endpoint.request().header("Authorization", "Bearer " + VALID_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0));
+    }
+
+    @ParameterizedTest(name = "租户管理员拒绝平台端点: {0}")
+    @MethodSource("platformManagementEndpointContract")
+    void platformEndpointShouldRejectTenantAuthorityWithoutPlatformIdentity(EndpointContract endpoint) throws Exception {
+        authenticate(endpoint.authority());
+
+        mockMvc.perform(endpoint.request().header("Authorization", "Bearer " + VALID_TOKEN))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value(1102));
+    }
+
+    @ParameterizedTest(name = "平台端点拒绝缺少操作权限: {0}")
+    @MethodSource("platformManagementEndpointContract")
+    void platformEndpointShouldRejectPlatformIdentityWithoutExactAuthority(EndpointContract endpoint) throws Exception {
+        authenticate("system:platform:admin");
+
+        mockMvc.perform(endpoint.request().header("Authorization", "Bearer " + VALID_TOKEN))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value(1102));
     }
 
     @Test
@@ -279,7 +309,7 @@ class UserControllerTest {
         authenticate("system:user:detail");
         when(userService.get(9_007_199_254_740_993L)).thenReturn(new UserVO(
                 "9007199254740993", "7", "alice", "Alice", null, null,
-                UserStatus.ENABLED, List.of(), null, null, null, null));
+                UserStatus.ENABLED, false, List.of(), null, null, null, null));
 
         mockMvc.perform(get("/api/v1/system/users/9007199254740993")
                         .header("Authorization", "Bearer " + VALID_TOKEN))
@@ -326,6 +356,17 @@ class UserControllerTest {
                 endpoint(HttpMethod.GET, "/api/v1/system/menus/permissions", null, "system:permission:list"));
     }
 
+    private static Stream<EndpointContract> platformManagementEndpointContract() {
+        return Stream.of(
+                endpoint(HttpMethod.GET, "/api/v1/system/menus/management-tree", null, "system:menu:list"),
+                endpoint(HttpMethod.GET, "/api/v1/system/menus/1", null, "system:menu:detail"),
+                endpoint(HttpMethod.POST, "/api/v1/system/menus", validMenuBody(), "system:menu:create"),
+                endpoint(HttpMethod.PUT, "/api/v1/system/menus/1", validMenuBody(), "system:menu:update"),
+                endpoint(HttpMethod.POST, "/api/v1/system/menus/1/enable", null, "system:menu:enable"),
+                endpoint(HttpMethod.POST, "/api/v1/system/menus/1/disable", null, "system:menu:disable"),
+                endpoint(HttpMethod.DELETE, "/api/v1/system/menus/1", null, "system:menu:delete"));
+    }
+
     private static Stream<EndpointContract> invalidBodyContracts() {
         return Stream.of(
                 endpoint(HttpMethod.POST, "/api/v1/system/users", "{}", "system:user:create"),
@@ -346,6 +387,12 @@ class UserControllerTest {
 
     private static String validUserUpdateBody() {
         return "{\"displayName\":\"Alice\",\"email\":\"alice@example.com\",\"mobile\":\"13800000000\"}";
+    }
+
+    private static String validMenuBody() {
+        return "{\"parentId\":null,\"name\":\"业务\",\"type\":\"DIRECTORY\","
+                + "\"routePath\":null,\"component\":null,\"icon\":null,\"permissionCode\":null,"
+                + "\"sortOrder\":1,\"visible\":true}";
     }
 
     /** 表示由设计文档独立硬编码的一行管理端点 HTTP 与权限契约。 */

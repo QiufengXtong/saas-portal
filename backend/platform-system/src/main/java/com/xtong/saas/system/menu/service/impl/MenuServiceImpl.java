@@ -10,6 +10,7 @@ import com.xtong.saas.system.menu.dto.UpdateMenuDTO;
 import com.xtong.saas.system.menu.entity.SystemMenu;
 import com.xtong.saas.system.menu.enums.MenuStatus;
 import com.xtong.saas.system.menu.enums.MenuType;
+import com.xtong.saas.system.menu.enums.PermissionScope;
 import com.xtong.saas.system.menu.exception.MenuErrorCode;
 import com.xtong.saas.system.menu.mapper.SystemMenuMapper;
 import com.xtong.saas.system.menu.model.MenuAffectedUser;
@@ -67,10 +68,12 @@ public class MenuServiceImpl implements MenuService {
         this.auditorProvider = auditorProvider;
     }
 
-    /** 加载启用菜单并构造成稳定排序的授权树。 */
+    /** 加载启用且租户可分配的菜单并构造成稳定排序的授权树。 */
     @Override
     public List<MenuTreeNodeVO> getTree() {
-        return buildTree(loadMenus(true));
+        return buildTree(loadMenus(true).stream()
+                .filter(menu -> effectiveScope(menu) == PermissionScope.TENANT)
+                .toList());
     }
 
     /** 加载全部未删除菜单并构造成包含管理状态的稳定树。 */
@@ -79,12 +82,24 @@ public class MenuServiceImpl implements MenuService {
         return buildTree(loadMenus(false));
     }
 
-    /** 加载全部启用按钮资源并返回稳定排序的权限码集合。 */
+    /** 加载全部启用、租户可分配的按钮权限码集合。 */
     @Override
     public Set<String> getPermissionCodes() {
+        return getPermissionCodes(PermissionScope.TENANT);
+    }
+
+    /** 加载只能由平台管理员持有的启用按钮权限码集合。 */
+    @Override
+    public Set<String> getPlatformPermissionCodes() {
+        return getPermissionCodes(PermissionScope.PLATFORM);
+    }
+
+    /** 按权限范围加载启用按钮权限码并稳定排序。 */
+    private Set<String> getPermissionCodes(PermissionScope scope) {
         LinkedHashSet<String> permissionCodes = new LinkedHashSet<>();
         loadMenus(true).stream()
                 .filter(menu -> menu.getType() == MenuType.BUTTON)
+                .filter(menu -> effectiveScope(menu) == scope)
                 .map(SystemMenu::getPermissionCode)
                 .filter(code -> code != null && !code.isBlank())
                 .sorted()
@@ -98,27 +113,28 @@ public class MenuServiceImpl implements MenuService {
         return MenuVO.from(requireMenu(menuId));
     }
 
-    /** 校验并创建非内置菜单，新增按钮后刷新全部租户管理员权限快照。 */
+    /** 校验并创建非内置菜单，新增按钮后刷新全部平台管理员权限快照。 */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public String create(CreateMenuDTO command) {
         Objects.requireNonNull(command, "command must not be null");
         MenuValues values = normalize(command.parentId(), command.name(), command.type(), command.routePath(),
                 command.component(), command.icon(), command.permissionCode(), command.sortOrder(), command.visible());
-        validateValues(null, MenuStatus.ENABLED, values);
+        validateValues(null, MenuStatus.ENABLED, values, null);
         assertPermissionCodeAvailable(values.permissionCode(), null);
 
         SystemMenu menu = new SystemMenu();
         applyValues(menu, values);
         menu.setStatus(MenuStatus.ENABLED);
         menu.setBuiltIn(false);
+        menu.setPermissionScope(resolveNewScope(values.parentId()));
         try {
             menuMapper.insert(menu);
         } catch (DuplicateKeyException exception) {
             throw new BusinessException(MenuErrorCode.PERMISSION_CODE_EXISTS);
         }
         if (values.type() == MenuType.BUTTON) {
-            invalidateUsers(roleMenuMapper.selectTenantAdminUsers());
+            invalidateUsers(roleMenuMapper.selectPlatformAdminUsers());
         }
         return menu.getId().toString();
     }
@@ -132,7 +148,8 @@ public class MenuServiceImpl implements MenuService {
         MenuValues values = normalize(command.parentId(), command.name(), command.type(), command.routePath(),
                 command.component(), command.icon(), command.permissionCode(), command.sortOrder(), command.visible());
         assertBuiltInUpdateSafe(menu, values);
-        validateValues(menuId, menu.getStatus(), values);
+        validateValues(menuId, menu.getStatus(), values,
+                Objects.equals(menu.getParentId(), values.parentId()) ? null : effectiveScope(menu));
         validateChildren(menuId, values.type());
         assertPermissionCodeAvailable(values.permissionCode(), menuId);
 
@@ -148,7 +165,7 @@ public class MenuServiceImpl implements MenuService {
         invalidateUsers(affectedUsers);
     }
 
-    /** 启用菜单，按钮重新生效时刷新其关联用户和租户管理员权限。 */
+    /** 启用菜单，按钮重新生效时刷新其关联用户和平台管理员权限。 */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void enable(long menuId) {
@@ -156,7 +173,7 @@ public class MenuServiceImpl implements MenuService {
         if (menu.getStatus() == MenuStatus.ENABLED) {
             return;
         }
-        validateValues(menuId, MenuStatus.ENABLED, valuesOf(menu));
+        validateValues(menuId, MenuStatus.ENABLED, valuesOf(menu), null);
         List<MenuAffectedUser> affectedUsers = menu.getType() == MenuType.BUTTON
                 ? roleMenuMapper.selectUsersAffectedByMenu(menuId) : List.of();
         menu.setStatus(MenuStatus.ENABLED);
@@ -164,7 +181,7 @@ public class MenuServiceImpl implements MenuService {
         invalidateUsers(affectedUsers);
     }
 
-    /** 停用非内置叶子菜单，按钮失效时刷新其关联用户和租户管理员权限。 */
+    /** 停用非内置叶子菜单，按钮失效时刷新其关联用户和平台管理员权限。 */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void disable(long menuId) {
@@ -196,7 +213,7 @@ public class MenuServiceImpl implements MenuService {
             throw new BusinessException(MenuErrorCode.MENU_ASSIGNED_TO_ROLE);
         }
         List<MenuAffectedUser> affectedUsers = menu.getType() == MenuType.BUTTON
-                ? roleMenuMapper.selectTenantAdminUsers() : List.of();
+                ? roleMenuMapper.selectPlatformAdminUsers() : List.of();
         int deleted = menuMapper.logicalDeleteWithAudit(menuId, currentAuditorId(), LocalDateTime.now());
         if (deleted != 1) {
             throw new BusinessException(MenuErrorCode.MENU_NOT_FOUND);
@@ -216,6 +233,16 @@ public class MenuServiceImpl implements MenuService {
                 .filter(menu -> !enabledOnly || menu.getStatus() == MenuStatus.ENABLED)
                 .sorted(MENU_ORDER)
                 .toList();
+    }
+
+    /** 新节点默认属于租户范围，挂在平台节点下时继承平台范围。 */
+    private PermissionScope resolveNewScope(Long parentId) {
+        return parentId == null ? PermissionScope.TENANT : effectiveScope(requireMenu(parentId));
+    }
+
+    /** 旧单测或迁移前对象未设置范围时按租户权限处理。 */
+    private PermissionScope effectiveScope(SystemMenu menu) {
+        return menu.getPermissionScope() == null ? PermissionScope.TENANT : menu.getPermissionScope();
     }
 
     /** 将扁平菜单按父子关系组装为树，孤立节点不会进入结果。 */
@@ -244,7 +271,7 @@ public class MenuServiceImpl implements MenuService {
                 menu.getId().toString(),
                 menu.getParentId() == null ? null : menu.getParentId().toString(),
                 menu.getName(), menu.getType(), menu.getRoutePath(), menu.getComponent(), menu.getIcon(),
-                menu.getPermissionCode(), menu.getSortOrder(), menu.getVisible(), menu.getStatus(),
+                menu.getPermissionCode(), effectiveScope(menu), menu.getSortOrder(), menu.getVisible(), menu.getStatus(),
                 Boolean.TRUE.equals(menu.getBuiltIn()), node.children().stream().map(this::toView).toList());
     }
 
@@ -267,7 +294,7 @@ public class MenuServiceImpl implements MenuService {
     }
 
     /** 校验节点字段、父子类型、父节点状态及循环层级。 */
-    private void validateValues(Long menuId, MenuStatus status, MenuValues values) {
+    private void validateValues(Long menuId, MenuStatus status, MenuValues values, PermissionScope requiredScope) {
         if (values.name() == null || values.type() == null || values.sortOrder() == null || values.visible() == null) {
             throw new BusinessException(MenuErrorCode.INVALID_MENU_FIELDS);
         }
@@ -280,7 +307,8 @@ public class MenuServiceImpl implements MenuService {
         }
         SystemMenu parent = requireMenu(values.parentId());
         if (!canContain(parent.getType(), values.type())
-                || status == MenuStatus.ENABLED && parent.getStatus() != MenuStatus.ENABLED) {
+                || status == MenuStatus.ENABLED && parent.getStatus() != MenuStatus.ENABLED
+                || requiredScope != null && effectiveScope(parent) != requiredScope) {
             throw new BusinessException(MenuErrorCode.INVALID_PARENT);
         }
         if (menuId != null && createsCycle(menuId, parent)) {

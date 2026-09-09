@@ -12,6 +12,9 @@ import java.util.List;
 @Mapper
 public interface SystemUserMapper extends BaseMapper<SystemUser> {
 
+    /** 判断指定租户用户是否为有效平台管理员。 */
+    boolean existsPlatformAdmin(@Param("tenantId") long tenantId, @Param("userId") long userId);
+
     /** 包含逻辑删除记录检查指定租户内的用户名占用数量。 */
     long countByTenantAndUsernameIncludingDeleted(
             @Param("tenantId") long tenantId, @Param("username") String username);

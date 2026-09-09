@@ -1,6 +1,7 @@
 package com.xtong.saas;
 
 import com.xtong.saas.system.bootstrap.SystemBootstrapInitializer;
+import com.xtong.saas.system.menu.service.PermissionService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -22,9 +23,12 @@ class SystemBootstrapIntegrationTest {
     @Autowired
     private SystemBootstrapInitializer initializer;
 
+    @Autowired
+    private PermissionService permissionService;
+
     @Test
     void shouldMigrateAndBootstrapInitialTenantIdempotently() {
-        assertThat(successfulVersionedMigrationCount()).isEqualTo(5);
+        assertThat(successfulVersionedMigrationCount()).isEqualTo(9);
         assertThat(count("sys_tenant")).isEqualTo(1);
         assertThat(count("sys_user")).isEqualTo(1);
         assertThat(count("sys_role")).isEqualTo(1);
@@ -32,13 +36,23 @@ class SystemBootstrapIntegrationTest {
 
         assertThat(singleString("SELECT tenant_code FROM sys_tenant")).isEqualTo("test");
         assertThat(singleString("SELECT username FROM sys_user")).isEqualTo("admin");
-        assertThat(singleString("SELECT role_code FROM sys_role")).isEqualTo("TENANT_ADMIN");
-        assertThat(singleString("SELECT status FROM sys_role WHERE role_code = 'TENANT_ADMIN'"))
+        assertThat(jdbcTemplate.queryForList("SELECT role_code FROM sys_role", String.class))
+                .containsExactly("PLATFORM_ADMIN");
+        assertThat(singleString("SELECT status FROM sys_role WHERE role_code = 'PLATFORM_ADMIN'"))
                 .isEqualTo("ENABLED");
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT built_in FROM sys_role WHERE role_code = 'TENANT_ADMIN'",
+                "SELECT built_in FROM sys_role WHERE role_code = 'PLATFORM_ADMIN'",
                 Boolean.class)).isTrue();
         assertThat(exactAdminRoleRelationCount()).isEqualTo(1);
+
+        long tenantId = jdbcTemplate.queryForObject("SELECT id FROM sys_tenant", Long.class);
+        long userId = jdbcTemplate.queryForObject("SELECT id FROM sys_user", Long.class);
+        java.util.Set<String> expectedPermissions = new java.util.HashSet<>(jdbcTemplate.queryForList(
+                "SELECT permission_code FROM sys_menu WHERE type = 'BUTTON' "
+                        + "AND status = 'ENABLED' AND deleted = 0 AND permission_code IS NOT NULL", String.class));
+        expectedPermissions.add("system:platform:admin");
+        assertThat(permissionService.loadUserPermissions(tenantId, userId))
+                .containsExactlyInAnyOrderElementsOf(expectedPermissions);
 
         initializer.run();
 
@@ -73,7 +87,7 @@ class SystemBootstrapIntegrationTest {
                 JOIN sys_role r ON ur.role_id = r.id AND r.tenant_id = t.id
                 WHERE t.tenant_code = 'test'
                   AND u.username = 'admin'
-                  AND r.role_code = 'TENANT_ADMIN'
+                  AND r.role_code = 'PLATFORM_ADMIN'
                 """, Long.class);
         return result == null ? 0 : result;
     }

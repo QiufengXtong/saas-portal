@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.annotation.TableName;
 import com.xtong.saas.common.model.BaseEntity;
 import com.xtong.saas.system.menu.enums.MenuStatus;
 import com.xtong.saas.system.menu.enums.MenuType;
+import com.xtong.saas.system.menu.enums.PermissionScope;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -24,4 +25,5 @@ public class SystemMenu extends BaseEntity {
     private Boolean visible;
     private MenuStatus status;
     private Boolean builtIn;
+    private PermissionScope permissionScope;
 }

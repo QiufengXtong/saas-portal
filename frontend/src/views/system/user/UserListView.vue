@@ -6,10 +6,12 @@ import {onMounted, reactive, ref} from 'vue'
 import {getRoles} from '@/api/role'
 import * as userApi from '@/api/user'
 import {usePermission} from '@/composables/usePermission'
+import {useAuthStore} from '@/stores/auth'
 import type {CreateUserCommand, EnabledStatus, RoleView, UserQuery, UserView} from '@/types/system'
 import {formatDateTime} from '@/utils/format'
 
 const {hasPermission} = usePermission()
+const authStore = useAuthStore()
 const loading = ref(false)
 const submitting = ref(false)
 const records = ref<UserView[]>([])
@@ -53,7 +55,7 @@ const load = async () => {
 
 const loadRoles = async () => {
     const page = await getRoles({pageNum: 1, pageSize: 500, status: 'ENABLED'})
-    roles.value = page.records
+    roles.value = page.records.filter(role => role.roleCode !== 'PLATFORM_ADMIN')
 }
 
 const resetQuery = () => {
@@ -227,7 +229,8 @@ onMounted(load)
           prop="username"
           label="用户名"
           min-width="130"
-        /><el-table-column
+        />
+        <el-table-column
           prop="displayName"
           label="显示名称"
           min-width="140"
@@ -263,42 +266,42 @@ onMounted(load)
         >
           <template #default="{row}">
             <el-button
-              v-if="hasPermission('system:user:update')"
+              v-if="(!row.platformAdmin || row.id === authStore.currentUser?.userId) && hasPermission('system:user:update')"
               link
               type="primary"
               @click="openEdit(row)"
             >
               编辑
             </el-button><el-button
-              v-if="hasPermission('system:user:assign-role')"
+              v-if="!row.platformAdmin && hasPermission('system:user:assign-role')"
               link
               type="primary"
               @click="openRoles(row)"
             >
               分配角色
             </el-button><el-button
-              v-if="hasPermission('system:user:reset-password')"
+              v-if="(!row.platformAdmin || row.id === authStore.currentUser?.userId) && hasPermission('system:user:reset-password')"
               link
               type="primary"
               @click="openPassword(row)"
             >
               重置密码
             </el-button><el-button
-              v-if="row.status === 'ENABLED' && hasPermission('system:user:disable')"
+              v-if="!row.platformAdmin && row.status === 'ENABLED' && hasPermission('system:user:disable')"
               link
               type="warning"
               @click="changeStatus(row, 'DISABLED')"
             >
               停用
             </el-button><el-button
-              v-if="row.status === 'DISABLED' && hasPermission('system:user:enable')"
+              v-if="!row.platformAdmin && row.status === 'DISABLED' && hasPermission('system:user:enable')"
               link
               type="success"
               @click="changeStatus(row, 'ENABLED')"
             >
               启用
             </el-button><el-button
-              v-if="hasPermission('system:user:delete')"
+              v-if="!row.platformAdmin && hasPermission('system:user:delete')"
               link
               type="danger"
               @click="remove(row)"

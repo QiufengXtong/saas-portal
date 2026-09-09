@@ -70,7 +70,8 @@ class SystemBootstrapInitializerTest {
             return 1;
         }).when(tenantMapper).insert(any(SystemTenant.class));
         doAnswer(invocation -> {
-            ((SystemRole) invocation.getArgument(0)).setId(202L);
+            SystemRole role = invocation.getArgument(0);
+            role.setId(203L);
             return 1;
         }).when(roleMapper).insert(any(SystemRole.class));
         doAnswer(invocation -> {
@@ -104,7 +105,7 @@ class SystemBootstrapInitializerTest {
             assertThat(relation.getId()).isPositive();
             assertThat(relation.getTenantId()).isEqualTo(101L);
             assertThat(relation.getUserId()).isEqualTo(303L);
-            assertThat(relation.getRoleId()).isEqualTo(202L);
+            assertThat(relation.getRoleId()).isEqualTo(203L);
             assertThat(relation.getCreatedBy()).isZero();
             assertThat(relation.getCreatedAt()).isBetween(startedAt, LocalDateTime.now());
         });
@@ -113,8 +114,9 @@ class SystemBootstrapInitializerTest {
         assertThat(tenantCaptor.getValue().getTenantName()).isEqualTo("Default Tenant");
         assertThat(tenantCaptor.getValue().getStatus()).isEqualTo(TenantStatus.ENABLED);
         assertThat(roleCaptor.getValue().getTenantId()).isEqualTo(101L);
-        assertThat(roleCaptor.getValue().getRoleCode()).isEqualTo("TENANT_ADMIN");
-        assertThat(roleCaptor.getValue().getRoleName()).isEqualTo("租户管理员");
+        assertThat(roleCaptor.getAllValues()).extracting(SystemRole::getRoleCode)
+                .containsExactly("PLATFORM_ADMIN");
+        assertThat(roleCaptor.getValue().getRoleName()).isEqualTo("平台管理员");
         assertThat(roleCaptor.getValue().getStatus()).isEqualTo(RoleStatus.ENABLED);
         assertThat(roleCaptor.getValue().getBuiltIn()).isTrue();
         assertThat(userCaptor.getValue().getTenantId()).isEqualTo(101L);

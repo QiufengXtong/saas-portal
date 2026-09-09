@@ -11,11 +11,14 @@ import java.util.Set;
 /** 提供全局菜单树、按钮权限目录及菜单资源安全维护能力。 */
 public interface MenuService {
 
-    /** 加载由全部启用菜单组成的树形结构。 */
+    /** 加载由全部启用、租户可分配菜单组成的树形结构。 */
     List<MenuTreeNodeVO> getTree();
 
     /** 加载全部启用按钮资源的权限码集合。 */
     Set<String> getPermissionCodes();
+
+    /** 加载只能由平台管理员持有的启用按钮权限码集合。 */
+    Set<String> getPlatformPermissionCodes();
 
     /** 加载包含停用节点和内置标识的管理菜单树。 */
     List<MenuTreeNodeVO> getManagementTree();

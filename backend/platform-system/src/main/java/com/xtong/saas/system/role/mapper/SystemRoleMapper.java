@@ -16,17 +16,8 @@ public interface SystemRoleMapper extends BaseMapper<SystemRole> {
     long countByTenantAndCodeIncludingDeleted(
             @Param("tenantId") long tenantId, @Param("roleCode") String roleCode);
 
-    /** 判断用户是否关联本租户启用且未删除的内置管理员角色，不检查用户状态。 */
-    boolean existsTenantAdminRole(@Param("tenantId") long tenantId, @Param("userId") long userId);
-
-    /** 统计非空 ID 集合中属于本租户且启用、未删除的角色数量。 */
+    /** 统计本租户启用、未删除且可手工分配的角色，排除 PLATFORM_ADMIN。 */
     long countByTenantAndIds(@Param("tenantId") long tenantId, @Param("roleIds") Set<Long> roleIds);
-
-    /** 判断非空 ID 集合是否包含本租户启用且未删除的内置管理员角色。 */
-    boolean containsTenantAdminRole(@Param("tenantId") long tenantId, @Param("roleIds") Set<Long> roleIds);
-
-    /** 统计本租户启用且未删除、具备有效内置管理员角色的去重用户数量。 */
-    long countEnabledTenantAdminUsers(@Param("tenantId") long tenantId);
 
     /** 逻辑删除租户内未删除角色，同时保存真实审计人和更新时间。 */
     int logicalDeleteWithAudit(

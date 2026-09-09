@@ -39,7 +39,7 @@ public class MenuController {
     }
 
     /**
-     * 查询启用状态的全局菜单树。
+     * 查询启用且允许租户角色分配的菜单树。
      *
      * @return 按层级和顺序组织的菜单树
      */
@@ -66,7 +66,7 @@ public class MenuController {
      * @return 完整菜单管理树
      */
     @GetMapping("/management-tree")
-    @PreAuthorize("hasAuthority('system:menu:list')")
+    @PreAuthorize("hasAuthority('system:platform:admin') and hasAuthority('system:menu:list')")
     public Result<List<MenuTreeNodeVO>> managementTree() {
         return Result.success(menuService.getManagementTree());
     }
@@ -78,7 +78,7 @@ public class MenuController {
      * @return 菜单详情
      */
     @GetMapping("/{id}")
-    @PreAuthorize("hasAuthority('system:menu:detail')")
+    @PreAuthorize("hasAuthority('system:platform:admin') and hasAuthority('system:menu:detail')")
     public Result<MenuVO> get(@PathVariable long id) {
         return Result.success(menuService.get(id));
     }
@@ -90,7 +90,7 @@ public class MenuController {
      * @return 新菜单字符串 ID
      */
     @PostMapping
-    @PreAuthorize("hasAuthority('system:menu:create')")
+    @PreAuthorize("hasAuthority('system:platform:admin') and hasAuthority('system:menu:create')")
     public Result<String> create(@Valid @RequestBody CreateMenuDTO command) {
         return Result.success(menuService.create(command));
     }
@@ -103,7 +103,7 @@ public class MenuController {
      * @return 无数据的成功响应
      */
     @PutMapping("/{id}")
-    @PreAuthorize("hasAuthority('system:menu:update')")
+    @PreAuthorize("hasAuthority('system:platform:admin') and hasAuthority('system:menu:update')")
     public Result<Void> update(@PathVariable long id, @Valid @RequestBody UpdateMenuDTO command) {
         menuService.update(id, command);
         return Result.success();
@@ -116,7 +116,7 @@ public class MenuController {
      * @return 无数据的成功响应
      */
     @PostMapping("/{id}/enable")
-    @PreAuthorize("hasAuthority('system:menu:enable')")
+    @PreAuthorize("hasAuthority('system:platform:admin') and hasAuthority('system:menu:enable')")
     public Result<Void> enable(@PathVariable long id) {
         menuService.enable(id);
         return Result.success();
@@ -129,7 +129,7 @@ public class MenuController {
      * @return 无数据的成功响应
      */
     @PostMapping("/{id}/disable")
-    @PreAuthorize("hasAuthority('system:menu:disable')")
+    @PreAuthorize("hasAuthority('system:platform:admin') and hasAuthority('system:menu:disable')")
     public Result<Void> disable(@PathVariable long id) {
         menuService.disable(id);
         return Result.success();
@@ -142,7 +142,7 @@ public class MenuController {
      * @return 无数据的成功响应
      */
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAuthority('system:menu:delete')")
+    @PreAuthorize("hasAuthority('system:platform:admin') and hasAuthority('system:menu:delete')")
     public Result<Void> delete(@PathVariable long id) {
         menuService.delete(id);
         return Result.success();

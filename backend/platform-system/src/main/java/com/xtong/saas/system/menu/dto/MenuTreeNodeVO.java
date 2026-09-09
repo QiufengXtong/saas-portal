@@ -1,7 +1,8 @@
 package com.xtong.saas.system.menu.dto;
 
-import com.xtong.saas.system.menu.enums.MenuType;
 import com.xtong.saas.system.menu.enums.MenuStatus;
+import com.xtong.saas.system.menu.enums.MenuType;
+import com.xtong.saas.system.menu.enums.PermissionScope;
 
 import java.util.List;
 
@@ -15,6 +16,7 @@ public record MenuTreeNodeVO(
         String component,
         String icon,
         String permissionCode,
+        PermissionScope permissionScope,
         Integer sortOrder,
         Boolean visible,
         MenuStatus status,

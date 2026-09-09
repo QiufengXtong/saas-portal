@@ -12,8 +12,8 @@ import java.util.Set;
 @Mapper
 public interface SystemMenuMapper extends BaseMapper<SystemMenu> {
 
-    /** 统计非空 ID 集合中启用且未删除的全局菜单及权限资源。 */
-    long countEnabledByIds(@Param("menuIds") Set<Long> menuIds);
+    /** 统计非空 ID 集合中启用、未删除且允许租户角色分配的菜单及权限资源。 */
+    long countEnabledTenantAssignableByIds(@Param("menuIds") Set<Long> menuIds);
 
     /** 包含逻辑删除记录检查权限码是否被其他菜单占用。 */
     long countByPermissionCodeIncludingDeleted(

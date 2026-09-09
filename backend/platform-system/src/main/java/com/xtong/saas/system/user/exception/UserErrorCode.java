@@ -10,8 +10,8 @@ public enum UserErrorCode implements ErrorCode {
     USERNAME_ALREADY_EXISTS(1302, "用户名已存在", HttpStatus.CONFLICT),
     INVALID_ROLE_ASSIGNMENT(1303, "角色分配不合法", HttpStatus.BAD_REQUEST),
     CANNOT_OPERATE_CURRENT_USER(1304, "不能操作当前用户", HttpStatus.BAD_REQUEST),
-    LAST_TENANT_ADMIN(1305, "租户至少需要一个有效管理员", HttpStatus.CONFLICT),
-    USER_DISABLED(1306, "用户已禁用", HttpStatus.FORBIDDEN);
+    USER_DISABLED(1306, "用户已禁用", HttpStatus.FORBIDDEN),
+    PLATFORM_ADMIN_PROTECTED(1307, "平台管理员不能通过租户用户管理变更", HttpStatus.FORBIDDEN);
 
     private final int code;
     private final String message;

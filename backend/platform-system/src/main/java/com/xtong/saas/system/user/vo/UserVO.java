@@ -15,6 +15,7 @@ public record UserVO(
         String email,
         String mobile,
         UserStatus status,
+        boolean platformAdmin,
         List<String> roleIds,
         LocalDateTime passwordChangedAt,
         LocalDateTime lastLoginAt,
@@ -22,7 +23,7 @@ public record UserVO(
         LocalDateTime updatedAt) {
 
     /** 将用户实体和其关联角色映射为不包含密码摘要的 API 视图。 */
-    public static UserVO from(SystemUser user, List<Long> roleIds) {
+    public static UserVO from(SystemUser user, List<Long> roleIds, boolean platformAdmin) {
         return new UserVO(
                 user.getId().toString(),
                 user.getTenantId().toString(),
@@ -31,6 +32,7 @@ public record UserVO(
                 user.getEmail(),
                 user.getMobile(),
                 user.getStatus(),
+                platformAdmin,
                 roleIds.stream().map(String::valueOf).toList(),
                 user.getPasswordChangedAt(),
                 user.getLastLoginAt(),
